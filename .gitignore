@@ -1,0 +1,37 @@
+# Don't commit original datasets or private documents
+*.csv
+*.xlsx
+*.xls
+*.doc
+*.docx
+*.pdf
+*.tsv
+*.json
+*.db
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# VSCode settings (optional, if用VSCode)
+.vscode/
+
+# macOS system files
+.DS_Store
+
+# Windows system files
+Thumbs.db
+desktop.ini
+
+# Node modules (if using JS scripts)
+node_modules/
+
+# Environment files (if using virtualenv)
+.env
+.venv/
+env/
+venv/
