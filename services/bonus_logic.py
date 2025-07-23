@@ -1,6 +1,7 @@
 # services/bonus_logic.py
 import pandas as pd
-from db import queries as q
+# 修正 import，明確指向 employee 查詢模組
+from db import queries_employee as q_emp
 
 def process_and_calculate_bonuses(conn, all_details_df, year, month):
     """
@@ -40,7 +41,7 @@ def process_and_calculate_bonuses(conn, all_details_df, year, month):
     abnormal_paid_off_records = df[df['unique_bill_id'].isin(fully_paid_bills_with_current_month_payment)].drop_duplicates(subset=['unique_bill_id'])
     
     # 匹配員工 ID
-    emp_map_df = q.get_employee_map(conn)
+    emp_map_df = q_emp.get_employee_map(conn)
     df['clean_name'] = df['外勞姓名'].str.replace(r'\s+', '', regex=True)
     df = pd.merge(df, emp_map_df, on='clean_name', how='left')
     

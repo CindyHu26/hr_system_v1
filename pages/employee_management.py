@@ -2,7 +2,9 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from db import queries as q
+# 修正 import
+from db import queries_employee as q_emp
+from db import queries_common as q_common
 from utils.helpers import to_date
 
 NATIONALITY_MAP = {'台灣': 'TW', '泰國': 'TH', '印尼': 'ID', '越南': 'VN', '菲律賓': 'PH'}
@@ -12,7 +14,7 @@ def show_page(conn):
     st.header("👤 員工管理")
 
     try:
-        df_raw = q.get_all_employees(conn)
+        df_raw = q_emp.get_all_employees(conn)
         df_display = df_raw.copy()
         if 'nationality' in df_display.columns:
             df_display['nationality'] = df_display['nationality'].map(NATIONALITY_MAP_REVERSE).fillna(df_display['nationality'])
@@ -51,7 +53,7 @@ def show_page(conn):
                 else:
                     try:
                         cleaned_data = {k: (v if v else None) for k, v in new_data.items()}
-                        q.add_record(conn, 'employee', cleaned_data)
+                        q_common.add_record(conn, 'employee', cleaned_data)
                         st.success(f"成功新增員工：{new_data['name_ch']}")
                         st.rerun()
                     except sqlite3.IntegrityError:
@@ -97,7 +99,7 @@ def show_page(conn):
                         else:
                             try:
                                 cleaned_data = {k: (v if v else None) for k, v in updated_data.items()}
-                                q.update_record(conn, 'employee', selected_id, cleaned_data)
+                                q_common.update_record(conn, 'employee', selected_id, cleaned_data)
                                 st.success(f"成功更新員工 {updated_data['name_ch']} 的資料！")
                                 st.rerun()
                             except Exception as e:
@@ -105,7 +107,7 @@ def show_page(conn):
 
                     if c_delete.form_submit_button("🔴 刪除此員工", use_container_width=True, type="primary"):
                         try:
-                            q.delete_record(conn, 'employee', selected_id)
+                            q_common.delete_record(conn, 'employee', selected_id)
                             st.success(f"已成功刪除員工 {emp_data['name_ch']}。")
                             st.rerun()
                         except Exception as e:

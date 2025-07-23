@@ -3,7 +3,7 @@ import pandas as pd
 import io
 import re
 import warnings
-from db import queries as q
+from db import queries_employee as q_emp
 
 def read_attendance_file(file):
     """
@@ -70,7 +70,7 @@ def match_employees_by_name(conn, attendance_df: pd.DataFrame):
 
     try:
         # 從資料庫獲取所有員工資料用於匹配
-        emp_df = q.get_all_employees(conn)
+        emp_df = q_emp.get_all_employees(conn)
         if emp_df.empty:
             # 如果資料庫中沒有員工，則無法進行任何匹配
             attendance_df['employee_id'] = None

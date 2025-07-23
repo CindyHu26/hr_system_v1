@@ -1,7 +1,8 @@
 # utils/ui_components.py
 import streamlit as st
 import pandas as pd
-from db import queries as q
+# 修正 import 路徑
+from db import queries_employee as q_emp
 
 def employee_selector(conn, key_prefix="", pre_selected_ids=None):
     """
@@ -13,7 +14,7 @@ def employee_selector(conn, key_prefix="", pre_selected_ids=None):
         pre_selected_ids = []
     
     try:
-        emp_df = q.get_all_employees(conn)[['id', 'name_ch', 'dept', 'title']]
+        emp_df = q_emp.get_all_employees(conn)[['id', 'name_ch', 'dept', 'title']]
         emp_df['display'] = emp_df['name_ch'] + " (" + emp_df['dept'].fillna('未分配') + " - " + emp_df['title'].fillna('無職稱') + ")"
         
         valid_depts = sorted([dept for dept in emp_df['dept'].unique() if pd.notna(dept)])

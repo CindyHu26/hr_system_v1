@@ -1,7 +1,7 @@
 # pages/company_management.py
 import streamlit as st
 import pandas as pd
-from db import queries as q
+from db import queries_common as q_common
 
 def show_page(conn):
     st.header("🏢 公司管理")
@@ -13,7 +13,7 @@ def show_page(conn):
     }
 
     try:
-        df_raw = q.get_all(conn, 'company', order_by='name')
+        df_raw = q_common.get_all(conn, 'company', order_by='name')
         st.dataframe(df_raw.rename(columns=COLUMN_MAP))
     except Exception as e:
         st.error(f"讀取公司資料時發生錯誤: {e}")
@@ -37,7 +37,7 @@ def show_page(conn):
                 else:
                     try:
                         cleaned_data = {k: (v if v else None) for k, v in new_data.items()}
-                        q.add_record(conn, 'company', cleaned_data)
+                        q_common.add_record(conn, 'company', cleaned_data)
                         st.success(f"成功新增公司：{new_data['name']}")
                         st.rerun()
                     except Exception as e:
@@ -50,7 +50,7 @@ def show_page(conn):
             
             if selected_key:
                 selected_id = options[selected_key]
-                comp_data = q.get_by_id(conn, 'company', selected_id)
+                comp_data = q_common.get_by_id(conn, 'company', selected_id)
 
                 with st.form(f"update_company_{selected_id}"):
                     st.write(f"### 正在編輯: {comp_data['name']}")
@@ -71,7 +71,7 @@ def show_page(conn):
                         else:
                             try:
                                 cleaned_data = {k: (v if v else None) for k, v in updated_data.items()}
-                                q.update_record(conn, 'company', selected_id, cleaned_data)
+                                q_common.update_record(conn, 'company', selected_id, cleaned_data)
                                 st.success(f"成功更新公司 {updated_data['name']} 的資料！")
                                 st.rerun()
                             except Exception as e:
@@ -79,7 +79,7 @@ def show_page(conn):
 
                     if c_delete.form_submit_button("🔴 刪除此公司", use_container_width=True, type="primary"):
                         try:
-                            q.delete_record(conn, 'company', selected_id)
+                            q_common.delete_record(conn, 'company', selected_id)
                             st.success(f"已成功刪除公司 {comp_data['name']}。")
                             st.rerun()
                         except Exception as e:

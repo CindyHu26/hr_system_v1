@@ -2,14 +2,17 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from db import queries as q
+# 修正 import
+from db import queries_insurance as q_ins
+from db import queries_employee as q_emp
+from db import queries_common as q_common
 
 def show_page(conn):
     st.header("📄 員工加保管理")
     st.info("管理每位員工的投保單位、加保與退保日期。")
 
     try:
-        history_df = q.get_all_insurance_history(conn)
+        history_df = q_ins.get_all_insurance_history(conn)
         st.dataframe(history_df.rename(columns={
             'name_ch': '員工姓名', 'company_name': '加保單位',
             'start_date': '加保日期', 'end_date': '退保日期', 'note': '備註'
@@ -25,8 +28,8 @@ def show_page(conn):
 
     with tab1:
         st.markdown("#### 新增一筆加保紀錄")
-        employees = q.get_all_employees(conn)
-        companies = q.get_all_companies(conn)
+        employees = q_emp.get_all_employees(conn)
+        companies = q_emp.get_all_companies(conn)
         
         emp_options = {f"{name} ({code})": eid for eid, name, code in zip(employees['id'], employees['name_ch'], employees['hr_code'])}
         comp_options = {name: cid for cid, name in zip(companies['id'], companies['name'])}
@@ -46,7 +49,7 @@ def show_page(conn):
                     'end_date': end_date.strftime('%Y-%m-%d') if end_date else None,
                     'note': note
                 }
-                q.add_record(conn, 'employee_company_history', new_data)
+                q_common.add_record(conn, 'employee_company_history', new_data)
                 st.success("成功新增加保紀錄！")
                 st.rerun()
 
@@ -74,11 +77,11 @@ def show_page(conn):
                             'end_date': end_date_edit.strftime('%Y-%m-%d') if end_date_edit else None,
                             'note': note_edit
                         }
-                        q.update_record(conn, 'employee_company_history', record_id, updated_data)
+                        q_common.update_record(conn, 'employee_company_history', record_id, updated_data)
                         st.success(f"紀錄 ID:{record_id} 已更新！")
                         st.rerun()
                     
                     if c2.form_submit_button("🔴 刪除此紀錄", type="primary"):
-                        q.delete_record(conn, 'employee_company_history', record_id)
+                        q_common.delete_record(conn, 'employee_company_history', record_id)
                         st.warning(f"紀錄 ID:{record_id} 已刪除！")
                         st.rerun()
