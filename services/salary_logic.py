@@ -4,8 +4,8 @@ import config
 # 修正 import 路徑，導入所有需要的模組
 from db import queries_employee as q_emp
 from db import queries_attendance as q_att
-from db import queries_salary_components as q_comp
-from db import queries_salary_records as q_sal_records
+from db import queries_salary_items as q_items
+from db import queries_salary_records as q_records
 from db import queries_insurance as q_ins
 from db import queries_bonus as q_bonus
 from services import overtime_logic
@@ -19,14 +19,14 @@ def calculate_salary_df(conn, year, month):
         return pd.DataFrame(), {}
     
     monthly_attendance = q_att.get_monthly_attendance_summary(conn, year, month)
-    item_types = q_comp.get_item_types(conn)
+    item_types = q_items.get_item_types(conn)
     all_salary_data = []
 
     for emp in employees:
         emp_id, emp_name = emp['id'], emp['name_ch']
         details = {'員工姓名': emp_name, '員工編號': emp['hr_code']}
         
-        base_info = q_comp.get_employee_base_salary_info(conn, emp_id, year, month)
+        base_info = q_items.get_employee_base_salary_info(conn, emp_id, year, month)
         base_salary = base_info['base_salary'] if base_info else 0
         insurance_salary = base_info['insurance_salary'] if base_info and base_info['insurance_salary'] else base_salary
         dependents = base_info['dependents'] if base_info else 0
@@ -50,7 +50,7 @@ def calculate_salary_df(conn, year, month):
                 if leave_type == '事假': details['事假'] = -int(round(hours * hourly_rate))
                 elif leave_type == '病假': details['病假'] = -int(round(hours * hourly_rate * 0.5))
 
-        for item in q_comp.get_employee_recurring_items(conn, emp_id):
+        for item in q_items.get_employee_recurring_items(conn, emp_id):
             details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
 
         if insurance_salary > 0:
@@ -123,7 +123,7 @@ def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file
 
         # 批次執行資料庫操作
         if data_to_upsert:
-            report["success"] = q_sal_records.batch_upsert_salary_details(conn, data_to_upsert)
+            report["success"] = q_records.batch_upsert_salary_details(conn, data_to_upsert)
             
         # 清理回報訊息
         report["skipped_emp"] = list(set(report["skipped_emp"]))

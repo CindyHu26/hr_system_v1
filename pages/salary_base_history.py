@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime, date
 
 # 導入新的、拆分後的查詢模組
-from db import queries_salary_components as q_comp 
+from db import queries_salary_items as q_items
 from db import queries_employee as q_emp
 from utils.helpers import to_date
 
@@ -29,7 +29,7 @@ def show_page(conn):
 
     if st.button("Step 1: 預覽將被更新的員工"):
         with st.spinner("正在篩選底薪低於新標準的員工..."):
-            preview_df = q_comp.get_employees_below_minimum_wage(conn, new_wage)
+            preview_df = q_items.get_employees_below_minimum_wage(conn, new_wage)
             st.session_state.salary_update_preview = preview_df
     
     if 'salary_update_preview' in st.session_state:
@@ -41,7 +41,7 @@ def show_page(conn):
             
             if st.button("Step 2: 確認執行更新", type="primary"):
                 with st.spinner("正在為以上員工批次新增調薪紀錄..."):
-                    count = q_comp.batch_update_base_salary(conn, preview_df, new_wage, effective_date)
+                    count = q_items.batch_update_base_salary(conn, preview_df, new_wage, effective_date)
                     st.success(f"成功為 {count} 位員工更新了基本工資！")
                     del st.session_state.salary_update_preview
                     st.rerun()
@@ -55,7 +55,7 @@ def show_page(conn):
     st.subheader("歷史紀錄總覽與手動操作")
     
     try:
-        history_df_raw = q_comp.get_salary_base_history(conn)
+        history_df_raw = q_items.get_salary_base_history(conn)
         history_df_display = history_df_raw.rename(columns={
             'name_ch': '員工姓名', 'base_salary': '底薪', 'insurance_salary': '投保薪資',
             'dependents': '眷屬數', 'start_date': '生效日', 'end_date': '結束日', 'note': '備註'
