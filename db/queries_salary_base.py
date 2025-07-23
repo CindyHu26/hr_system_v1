@@ -1,23 +1,12 @@
-# db/queries_salary_components.py
+# db/queries_salary_base.py
 """
-資料庫查詢：專門處理薪資的「基礎設定」，如薪資項目、底薪歷史、常態津貼等。
+資料庫查詢：專門處理員工的「薪資基準(salary_base_history)」，如底薪、眷屬數的歷史紀錄。
 """
 import pandas as pd
 from utils.helpers import get_monthly_dates
 
-def get_all_salary_items(conn, active_only=False):
-    """取得所有薪資項目。"""
-    query = "SELECT * FROM salary_item ORDER BY type, id"
-    if active_only:
-        query = "SELECT * FROM salary_item WHERE is_active = 1"
-    return pd.read_sql_query(query, conn)
-
-def get_item_types(conn):
-    """獲取薪資項目的名稱與類型對應字典。"""
-    return pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
-
 def get_salary_base_history(conn):
-    """取得所有員工的薪資基準(底薪、投保薪資、眷屬數)歷史紀錄。"""
+    """取得所有員工的薪資基準歷史紀錄。"""
     return pd.read_sql_query("""
         SELECT sh.id, sh.employee_id, e.name_ch, sh.base_salary, sh.insurance_salary,
                sh.dependents, sh.start_date, sh.end_date, sh.note
@@ -30,11 +19,6 @@ def get_employee_base_salary_info(conn, emp_id, year, month):
     _, month_end = get_monthly_dates(year, month)
     sql = "SELECT base_salary, insurance_salary, dependents FROM salary_base_history WHERE employee_id = ? AND start_date <= ? ORDER BY start_date DESC LIMIT 1"
     return conn.execute(sql, (emp_id, month_end)).fetchone()
-
-def get_employee_recurring_items(conn, emp_id):
-    """查詢員工的常態薪資設定 (如固定的津貼或扣款)。"""
-    sql = "SELECT si.name, esi.amount, si.type FROM employee_salary_item esi JOIN salary_item si ON esi.salary_item_id = si.id WHERE esi.employee_id = ?"
-    return conn.execute(sql, (emp_id,)).fetchall()
 
 def get_employees_below_minimum_wage(conn, new_minimum_wage: int):
     """找出所有在職且當前底薪低於指定薪資的員工。"""
