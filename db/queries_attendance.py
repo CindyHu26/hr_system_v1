@@ -67,6 +67,19 @@ def batch_insert_or_update_attendance(conn, df: pd.DataFrame):
         conn.rollback()
         raise e
 
+def get_special_attendance_by_month(conn, year, month):
+    """查詢指定月份的特別出勤紀錄。"""
+    month_str = f"{year}-{month:02d}"
+    query = """
+    SELECT sa.id, e.name_ch as '員工姓名', sa.date as '日期', 
+           sa.checkin_time as '上班時間', sa.checkout_time as '下班時間', sa.note as '備註'
+    FROM special_attendance sa
+    JOIN employee e ON sa.employee_id = e.id
+    WHERE STRFTIME('%Y-%m', sa.date) = ?
+    ORDER BY sa.date, e.name_ch
+    """
+    return pd.read_sql_query(query, conn, params=(month_str,))
+
 def get_special_attendance_for_month(conn, employee_id, year, month):
     """查詢員工指定月份的特別出勤紀錄。"""
     month_str = f"{year}-{month:02d}"

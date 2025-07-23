@@ -5,6 +5,7 @@ import config
 from db import queries_employee as q_emp
 from db import queries_attendance as q_att
 from db import queries_salary_components as q_comp
+from db import queries_salary_records as q_sal_records
 from db import queries_insurance as q_ins
 from db import queries_bonus as q_bonus
 from services import overtime_logic
@@ -122,7 +123,7 @@ def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file
 
         # 批次執行資料庫操作
         if data_to_upsert:
-            report["success"] = q_records.batch_upsert_salary_details(conn, data_to_upsert)
+            report["success"] = q_sal_records.batch_upsert_salary_details(conn, data_to_upsert)
             
         # 清理回報訊息
         report["skipped_emp"] = list(set(report["skipped_emp"]))
