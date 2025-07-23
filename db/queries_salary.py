@@ -1,60 +1,15 @@
-# db/queries.py
+# db/queries_salary.py
 """
-此模組為資料庫存取層 (Data Access Layer)。
-所有對資料庫的 SQL 查詢、新增、修改、刪除操作都應集中在此處。
-其他模組 (特別是 services) 應呼叫此處的函式來獲取或儲存資料，
-而不是直接撰寫 SQL 語句。
+資料庫查詢：專門處理所有與「薪資(salary)」、「保險(insurance)」
+和「獎金(bonus)」計算相關的資料庫操作。
 """
 import pandas as pd
 from utils.helpers import get_monthly_dates
 
-# --- 通用 CRUD ---
-def get_all(conn, table_name, order_by="id"):
-    return pd.read_sql_query(f"SELECT * FROM {table_name} ORDER BY {order_by}", conn)
+# --- 保險(Insurance) 相關 ---
 
-def get_by_id(conn, table_name, record_id):
-    df = pd.read_sql_query(f"SELECT * FROM {table_name} WHERE id = ?", conn, params=(record_id,))
-    return df.iloc[0] if not df.empty else None
-
-def add_record(conn, table_name, data: dict):
-    cursor = conn.cursor()
-    cols = ', '.join(data.keys())
-    placeholders = ', '.join('?' for _ in data)
-    sql = f'INSERT INTO {table_name} ({cols}) VALUES ({placeholders})'
-    cursor.execute(sql, list(data.values()))
-    conn.commit()
-    return cursor.lastrowid
-
-def update_record(conn, table_name, record_id, data: dict):
-    cursor = conn.cursor()
-    updates = ', '.join([f"{key} = ?" for key in data.keys()])
-    sql = f'UPDATE {table_name} SET {updates} WHERE id = ?'
-    cursor.execute(sql, list(data.values()) + [record_id])
-    conn.commit()
-    return cursor.rowcount
-
-def delete_record(conn, table_name, record_id):
-    cursor = conn.cursor()
-    # 啟用外鍵約束，確保刪除時的資料完整性
-    cursor.execute("PRAGMA foreign_keys = ON;")
-    cursor.execute(f'DELETE FROM {table_name} WHERE id = ?', (record_id,))
-    conn.commit()
-    return cursor.rowcount
-
-# --- Employee & Company Queries ---
-def get_all_employees(conn):
-    return pd.read_sql_query("SELECT * FROM employee ORDER BY hr_code", conn)
-
-def get_employee_map(conn):
-    df = pd.read_sql_query("SELECT id as employee_id, name_ch FROM employee", conn)
-    df['clean_name'] = df['name_ch'].str.replace(r'\s+', '', regex=True)
-    return df
-
-def get_all_companies(conn):
-    return pd.read_sql_query("SELECT * FROM company ORDER BY name", conn)
-
-# --- Insurance History ---
 def get_all_insurance_history(conn):
+    """取得所有員工的加退保歷史紀錄。"""
     query = """
     SELECT ech.id, e.name_ch, c.name as company_name,
            ech.start_date, ech.end_date, ech.note
@@ -65,14 +20,27 @@ def get_all_insurance_history(conn):
     """
     return pd.read_sql_query(query, conn)
 
-# --- Salary Item & Base History ---
+def get_employee_insurance_fee(conn, insurance_salary):
+    """根據投保薪資查詢員工應負擔的勞健保費用。"""
+    sql_labor = "SELECT employee_fee FROM insurance_grade WHERE type = 'labor' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
+    labor_fee_row = conn.execute(sql_labor, (insurance_salary,)).fetchone()
+    
+    sql_health = "SELECT employee_fee FROM insurance_grade WHERE type = 'health' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
+    health_fee_row = conn.execute(sql_health, (insurance_salary,)).fetchone()
+    
+    return (labor_fee_row[0] if labor_fee_row else 0), (health_fee_row[0] if health_fee_row else 0)
+
+# --- 薪資項目(Salary Item) & 薪資基準(Base History) ---
+
 def get_all_salary_items(conn, active_only=False):
+    """取得所有薪資項目。"""
     query = "SELECT * FROM salary_item ORDER BY type, id"
     if active_only:
         query = "SELECT * FROM salary_item WHERE is_active = 1"
     return pd.read_sql_query(query, conn)
 
 def get_salary_base_history(conn):
+    """取得所有員工的薪資基準(底薪、眷屬數)歷史紀錄。"""
     return pd.read_sql_query("""
         SELECT sh.id, sh.employee_id, e.name_ch, sh.base_salary, sh.insurance_salary,
                sh.dependents, sh.start_date, sh.end_date, sh.note
@@ -81,17 +49,24 @@ def get_salary_base_history(conn):
     """, conn)
 
 def get_employee_base_salary_info(conn, emp_id, year, month):
+    """查詢員工在特定時間點的底薪、投保薪資與眷屬數。"""
     _, month_end = get_monthly_dates(year, month)
     sql = "SELECT base_salary, insurance_salary, dependents FROM salary_base_history WHERE employee_id = ? AND start_date <= ? ORDER BY start_date DESC LIMIT 1"
     return conn.execute(sql, (emp_id, month_end)).fetchone()
 
-# --- Salary & Bonus Queries ---
 def get_item_types(conn):
-    """獲取薪資項目的名稱與類型對應字典"""
+    """獲取薪資項目的名稱與類型對應字典。"""
     return pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
 
+def get_employee_recurring_items(conn, emp_id):
+    """查詢員工的常態薪資設定 (如固定的津貼或扣款)。"""
+    sql = "SELECT si.name, esi.amount, si.type FROM employee_salary_item esi JOIN salary_item si ON esi.salary_item_id = si.id WHERE esi.employee_id = ?"
+    return conn.execute(sql, (emp_id,)).fetchall()
+
+# --- 薪資主流程(Salary) & 獎金(Bonus) ---
+
 def get_active_employees_for_month(conn, year, month):
-    """查詢指定月份仍在職的員工"""
+    """查詢指定月份仍在職的員工。"""
     start_date, end_date = get_monthly_dates(year, month)
     query = """
     SELECT e.id, e.name_ch, e.hr_code FROM employee e
@@ -102,7 +77,7 @@ def get_active_employees_for_month(conn, year, month):
     return conn.execute(query, (end_date, start_date)).fetchall()
 
 def get_monthly_attendance_summary(conn, year, month):
-    """獲取指定月份的考勤總結"""
+    """獲取指定月份的考勤總結，用於薪資計算。"""
     _, month_end = get_monthly_dates(year, month)
     month_str = month_end[:7] # YYYY-MM
     query = """
@@ -117,43 +92,10 @@ def get_monthly_attendance_summary(conn, year, month):
     """
     return pd.read_sql_query(query, conn, params=(month_str,)).set_index('employee_id')
 
-def get_employee_base_salary_info(conn, emp_id, year, month):
-    """查詢員工當前的底薪、投保薪資與眷屬數"""
-    _, month_end = get_monthly_dates(year, month)
-    sql = "SELECT base_salary, insurance_salary, dependents FROM salary_base_history WHERE employee_id = ? AND start_date <= ? ORDER BY start_date DESC LIMIT 1"
-    return conn.execute(sql, (emp_id, month_end)).fetchone()
-
-def get_employee_leave_summary(conn, emp_id, year, month):
-    """查詢員工當月的請假總結"""
-    month_str = f"{year}-{month:02d}"
-    sql = "SELECT leave_type, SUM(duration) FROM leave_record WHERE employee_id = ? AND strftime('%Y-%m', start_date) = ? AND status = '已通過' GROUP BY leave_type"
-    return conn.execute(sql, (emp_id, month_str)).fetchall()
-
-def get_employee_recurring_items(conn, emp_id):
-    """查詢員工的常態薪資設定"""
-    sql = "SELECT si.name, esi.amount, si.type FROM employee_salary_item esi JOIN salary_item si ON esi.salary_item_id = si.id WHERE esi.employee_id = ?"
-    return conn.execute(sql, (emp_id,)).fetchall()
-
-def get_employee_insurance_fee(conn, insurance_salary):
-    """查詢員工應負擔的勞健保費用"""
-    sql_labor = "SELECT employee_fee FROM insurance_grade WHERE type = 'labor' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
-    labor_fee_row = conn.execute(sql_labor, (insurance_salary,)).fetchone()
-    
-    sql_health = "SELECT employee_fee FROM insurance_grade WHERE type = 'health' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
-    health_fee_row = conn.execute(sql_health, (insurance_salary,)).fetchone()
-    
-    return (labor_fee_row[0] if labor_fee_row else 0), (health_fee_row[0] if health_fee_row else 0)
-
 def get_employee_bonus(conn, emp_id, year, month):
-    """從中繼站讀取預先算好的業務獎金"""
+    """從中繼站讀取預先算好的業務獎金。"""
     sql = "SELECT bonus_amount FROM monthly_bonus WHERE employee_id = ? AND year = ? AND month = ?"
     return conn.execute(sql, (emp_id, year, month)).fetchone()
-
-def get_special_attendance_for_month(conn, employee_id, year, month):
-    """查詢員工指定月份的特別出勤紀錄"""
-    month_str = f"{year}-{month:02d}"
-    query = "SELECT checkin_time, checkout_time FROM special_attendance WHERE employee_id = ? AND STRFTIME('%Y-%m', date) = ?"
-    return conn.execute(query, (employee_id, month_str)).fetchall()
 
 def save_bonuses_to_monthly_table(conn, year, month, summary_df):
     """將計算好的獎金總結存入 monthly_bonus 中繼站。"""
@@ -173,7 +115,7 @@ def save_bonuses_to_monthly_table(conn, year, month, summary_df):
         raise e
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):
-    """儲存薪資草稿"""
+    """儲存薪資草稿。"""
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
     item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
@@ -189,7 +131,7 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
     conn.commit()
 
 def finalize_salary_records(conn, year, month, df: pd.DataFrame):
-    """將薪資紀錄定版"""
+    """將薪資紀錄定版。"""
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
     for _, row in df.iterrows():
@@ -211,7 +153,7 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
     conn.commit()
 
 def revert_salary_to_draft(conn, year, month, employee_ids: list):
-    """將已定版的薪資紀錄恢復為草稿狀態"""
+    """將已定版的薪資紀錄恢復為草稿狀態。"""
     if not employee_ids: return 0
     cursor = conn.cursor()
     placeholders = ','.join('?' for _ in employee_ids)
