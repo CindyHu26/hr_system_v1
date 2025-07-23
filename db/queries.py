@@ -8,7 +8,6 @@
 import pandas as pd
 from utils.helpers import get_monthly_dates
 
-
 # --- 通用 CRUD ---
 def get_all(conn, table_name, order_by="id"):
     return pd.read_sql_query(f"SELECT * FROM {table_name} ORDER BY {order_by}", conn)
