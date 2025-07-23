@@ -1,32 +1,76 @@
-# app.py
+# app.py (最終版)
 import streamlit as st
 from db.db_manager import init_connection
 from pages import (
     employee_management, 
-    salary_calculation, 
+    company_management,
+    insurance_history,
+    attendance_management,
+    special_attendance,
+    leave_analysis,
+    salary_item_management,
+    insurance_grade_management,
     salary_base_history,
-    bonus_batch
+    allowance_setting,
+    bonus_batch,
+    salary_calculation,
+    annual_summary,
+    nhi_summary
 )
 
 # --- 頁面設定 ---
-st.set_page_config(layout="wide", page_title="輕量人資系統")
+st.set_page_config(layout="wide", page_title="輕量人資系統 v1.0")
 
 # --- 資料庫連線 ---
 conn = init_connection()
+if not conn:
+    st.error("資料庫連線失敗，請檢查設定。")
+    st.stop()
 
 # --- 頁面路由 ---
-PAGES = {
+PAGES_ADMIN = {
     "👤 員工管理": employee_management,
+    "🏢 公司管理": company_management,
+    "📄 員工加保管理": insurance_history,
+}
+PAGES_ATTENDANCE = {
+    "� 出勤紀錄管理": attendance_management,
+    "📝 特別出勤管理": special_attendance,
+    "🌴 請假與異常分析": leave_analysis,
+}
+PAGES_SALARY = {
+    "⚙️ 薪資項目管理": salary_item_management,
+    "🏦 勞健保級距管理": insurance_grade_management,
     "📈 薪資基準管理": salary_base_history,
+    "➕ 員工常態薪資項設定": allowance_setting,
     "🌀 業務獎金批次匯入": bonus_batch,
     "💵 薪資單產生與管理": salary_calculation,
-    # --- 未來可以繼續加入其他頁面 ---
-    # "🏢 公司管理": company_management,
-    # "📅 出勤紀錄管理": attendance_management,
+}
+PAGES_REPORTING = {
+    "📊 年度薪資總表": annual_summary,
+    "健保補充保費試算": nhi_summary,
 }
 
-st.sidebar.title("HRIS 導覽")
-selection = st.sidebar.radio("前往：", list(PAGES.keys()))
+ALL_PAGES = {**PAGES_ADMIN, **PAGES_ATTENDANCE, **PAGES_SALARY, **PAGES_REPORTING}
 
-page = PAGES[selection]
-page.show_page(conn)
+# --- Streamlit 側邊欄 UI ---
+st.sidebar.title("HRIS 人資系統 v1.0")
+
+page_groups = {
+    "基礎資料管理": list(PAGES_ADMIN.keys()),
+    "出勤與假務": list(PAGES_ATTENDANCE.keys()),
+    "薪資核心功能": list(PAGES_SALARY.keys()),
+    "報表與分析": list(PAGES_REPORTING.keys())
+}
+
+selected_group = st.sidebar.selectbox("選擇功能區塊", list(page_groups.keys()))
+
+selected_page_name = st.sidebar.radio(
+    f"--- {selected_group} ---", 
+    page_groups[selected_group],
+    label_visibility="collapsed"
+)
+
+# 執行選定的頁面
+page_to_show = ALL_PAGES[selected_page_name]
+page_to_show.show_page(conn)
