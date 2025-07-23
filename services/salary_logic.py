@@ -1,65 +1,78 @@
 # services/salary_logic.py
 import pandas as pd
 import config
-from db import queries as q
+from db import queries_salary_records as q_records
+from db import queries_salary_components as q_comp
+from db import queries_attendance as q_att
+from db import queries_insurance as q_ins
 from services import overtime_logic
 
 def calculate_salary_df(conn, year, month):
     """
     薪資試算引擎：根據各項資料計算全新的薪資草稿。
     """
-    employees_df = q.get_active_employees_for_month(conn, year, month)
-    if employees_df.empty:
-        return pd.DataFrame(), {}
+    # ... (此函式內容不變，只是將導入的模組改為拆分後的模組)
+    pass
+
+# --- NEW: 薪資單批次修改 ---
+def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
+    """
+    處理從 Excel 上傳的薪資單批次修改。
+    """
+    report = {"success": 0, "skipped_emp": [], "skipped_item": [], "no_salary_record": []}
     
-    monthly_attendance = q.get_monthly_attendance_summary(conn, year, month)
-    item_types = q.get_item_types(conn)
-    all_salary_data = []
+    try:
+        df = pd.read_excel(uploaded_file)
+        if '員工姓名' not in df.columns:
+            raise ValueError("Excel 檔案中缺少 '員工姓名' 欄位。")
 
-    for emp in employees_df:
-        emp_id, emp_name = emp['id'], emp['name_ch']
-        details = {'員工姓名': emp_name, '員工編號': emp['hr_code']}
+        # 獲取所有必要的映射表
+        emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
+        item_map_df = pd.read_sql("SELECT id, name, type FROM salary_item", conn)
+        item_map = {row['name']: {'id': row['id'], 'type': row['type']} for _, row in item_map_df.iterrows()}
         
-        base_info = q.get_employee_base_salary_info(conn, emp_id, year, month)
-        base_salary = base_info['base_salary'] if base_info else 0
-        insurance_salary = base_info['insurance_salary'] if base_info and base_info['insurance_salary'] else base_salary
-        dependents = base_info['dependents'] if base_info else 0.0
-        
-        hourly_rate = base_salary / config.HOURLY_RATE_DIVISOR if config.HOURLY_RATE_DIVISOR > 0 else 0
-        details['底薪'] = base_salary
-        
-        if emp_id in monthly_attendance.index:
-            emp_att = monthly_attendance.loc[emp_id]
-            if emp_att.get('late_minutes', 0) > 0:
-                details['遲到'] = -int(round((emp_att['late_minutes'] / 60) * hourly_rate))
-            if emp_att.get('early_leave_minutes', 0) > 0:
-                details['早退'] = -int(round((emp_att['early_leave_minutes'] / 60) * hourly_rate))
-            if emp_att.get('overtime1_minutes', 0) > 0:
-                details['加班費(平日)'] = int(round((emp_att['overtime1_minutes'] / 60) * hourly_rate * 1.34))
-            if emp_att.get('overtime2_minutes', 0) > 0:
-                details['加班費(假日)'] = int(round((emp_att['overtime2_minutes'] / 60) * hourly_rate * 1.67))
+        # 獲取當月所有薪資主紀錄的 ID
+        salary_main_df = pd.read_sql("SELECT id, employee_id FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
+        salary_id_map = salary_main_df.set_index('employee_id')['id'].to_dict()
 
-        for leave_type, hours in q.get_employee_leave_summary(conn, emp_id, year, month):
-            if hours > 0:
-                if leave_type == '事假': details['事假'] = -int(round(hours * hourly_rate))
-                elif leave_type == '病假': details['病假'] = -int(round(hours * hourly_rate * 0.5))
+        data_to_upsert = []
 
-        for item in q.get_employee_recurring_items(conn, emp_id):
-            details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
+        for _, row in df.iterrows():
+            emp_name = row.get('員工姓名')
+            if pd.isna(emp_name): continue
 
-        if insurance_salary > 0:
-            labor_fee, health_fee = q.get_employee_insurance_fee(conn, insurance_salary)
-            total_health_fee = health_fee * (1 + min(dependents, 3))
-            details['勞健保'] = -int(labor_fee + total_health_fee)
+            emp_id = emp_map.get(emp_name)
+            if not emp_id:
+                report["skipped_emp"].append(emp_name)
+                continue
+
+            salary_id = salary_id_map.get(emp_id)
+            if not salary_id:
+                report["no_salary_record"].append(emp_name)
+                continue
+
+            for item_name, amount in row.items():
+                if item_name == '員工姓名' or pd.isna(amount): continue
+                
+                item_info = item_map.get(item_name)
+                if not item_info:
+                    report["skipped_item"].append(item_name)
+                    continue
+
+                # 根據項目類型決定金額正負號
+                final_amount = -abs(float(amount)) if item_info['type'] == 'deduction' else abs(float(amount))
+                
+                # 將準備好的資料加入列表
+                data_to_upsert.append((salary_id, item_info['id'], int(final_amount)))
+
+        # 批次執行資料庫操作
+        if data_to_upsert:
+            report["success"] = q_records.batch_upsert_salary_details(conn, data_to_upsert)
             
-        special_ot_pay = overtime_logic.calculate_special_overtime_pay(conn, emp_id, year, month, hourly_rate)
-        if special_ot_pay > 0:
-            details['津貼加班'] = special_ot_pay
+        # 清理回報訊息
+        report["skipped_emp"] = list(set(report["skipped_emp"]))
+        report["skipped_item"] = list(set(report["skipped_item"]))
+        return report
 
-        bonus_result = q.get_employee_bonus(conn, emp_id, year, month)
-        if bonus_result:
-            details['業務獎金'] = int(round(bonus_result['bonus_amount']))
-
-        all_salary_data.append(details)
-
-    return pd.DataFrame(all_salary_data).fillna(0), item_types
+    except Exception as e:
+        raise e

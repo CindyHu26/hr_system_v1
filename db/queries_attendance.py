@@ -4,6 +4,7 @@
 與「請假(leave_record)」相關的資料庫操作。
 """
 import pandas as pd
+from utils.helpers import get_monthly_dates
 
 def get_attendance_by_month(conn, year, month):
     """根據年月查詢出勤紀錄，並一併顯示員工姓名與編號。"""
@@ -78,7 +79,17 @@ def get_employee_leave_summary(conn, emp_id, year, month):
     sql = "SELECT leave_type, SUM(duration) FROM leave_record WHERE employee_id = ? AND strftime('%Y-%m', start_date) = ? AND status = '已通過' GROUP BY leave_type"
     return conn.execute(sql, (emp_id, month_str)).fetchall()
 
-# --- NEW: 請假紀錄相關 ---
+def get_monthly_attendance_summary(conn, year, month):
+    """獲取指定月份的考勤總結，用於薪資計算。"""
+    _, month_end = get_monthly_dates(year, month)
+    month_str = month_end[:7] # YYYY-MM
+    query = """
+    SELECT employee_id, 
+           SUM(overtime1_minutes) as overtime1_minutes, SUM(overtime2_minutes) as overtime2_minutes, 
+           SUM(late_minutes) as late_minutes, SUM(early_leave_minutes) as early_leave_minutes 
+    FROM attendance WHERE STRFTIME('%Y-%m', date) = ? GROUP BY employee_id
+    """
+    return pd.read_sql_query(query, conn, params=(month_str,)).set_index('employee_id')
 
 def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
     """
