@@ -8,16 +8,83 @@
 import pandas as pd
 from utils.helpers import get_monthly_dates
 
-# --- Employee Queries ---
+
+# --- 通用 CRUD ---
+def get_all(conn, table_name, order_by="id"):
+    return pd.read_sql_query(f"SELECT * FROM {table_name} ORDER BY {order_by}", conn)
+
+def get_by_id(conn, table_name, record_id):
+    df = pd.read_sql_query(f"SELECT * FROM {table_name} WHERE id = ?", conn, params=(record_id,))
+    return df.iloc[0] if not df.empty else None
+
+def add_record(conn, table_name, data: dict):
+    cursor = conn.cursor()
+    cols = ', '.join(data.keys())
+    placeholders = ', '.join('?' for _ in data)
+    sql = f'INSERT INTO {table_name} ({cols}) VALUES ({placeholders})'
+    cursor.execute(sql, list(data.values()))
+    conn.commit()
+    return cursor.lastrowid
+
+def update_record(conn, table_name, record_id, data: dict):
+    cursor = conn.cursor()
+    updates = ', '.join([f"{key} = ?" for key in data.keys()])
+    sql = f'UPDATE {table_name} SET {updates} WHERE id = ?'
+    cursor.execute(sql, list(data.values()) + [record_id])
+    conn.commit()
+    return cursor.rowcount
+
+def delete_record(conn, table_name, record_id):
+    cursor = conn.cursor()
+    # 啟用外鍵約束，確保刪除時的資料完整性
+    cursor.execute("PRAGMA foreign_keys = ON;")
+    cursor.execute(f'DELETE FROM {table_name} WHERE id = ?', (record_id,))
+    conn.commit()
+    return cursor.rowcount
+
+# --- Employee & Company Queries ---
 def get_all_employees(conn):
-    """查詢所有員工資料"""
     return pd.read_sql_query("SELECT * FROM employee ORDER BY hr_code", conn)
 
 def get_employee_map(conn):
-    """取得員工姓名與ID的對應 DataFrame，用於資料匹配"""
     df = pd.read_sql_query("SELECT id as employee_id, name_ch FROM employee", conn)
     df['clean_name'] = df['name_ch'].str.replace(r'\s+', '', regex=True)
     return df
+
+def get_all_companies(conn):
+    return pd.read_sql_query("SELECT * FROM company ORDER BY name", conn)
+
+# --- Insurance History ---
+def get_all_insurance_history(conn):
+    query = """
+    SELECT ech.id, e.name_ch, c.name as company_name,
+           ech.start_date, ech.end_date, ech.note
+    FROM employee_company_history ech
+    JOIN employee e ON ech.employee_id = e.id
+    JOIN company c ON ech.company_id = c.id
+    ORDER BY ech.start_date DESC
+    """
+    return pd.read_sql_query(query, conn)
+
+# --- Salary Item & Base History ---
+def get_all_salary_items(conn, active_only=False):
+    query = "SELECT * FROM salary_item ORDER BY type, id"
+    if active_only:
+        query = "SELECT * FROM salary_item WHERE is_active = 1"
+    return pd.read_sql_query(query, conn)
+
+def get_salary_base_history(conn):
+    return pd.read_sql_query("""
+        SELECT sh.id, sh.employee_id, e.name_ch, sh.base_salary, sh.insurance_salary,
+               sh.dependents, sh.start_date, sh.end_date, sh.note
+        FROM salary_base_history sh JOIN employee e ON sh.employee_id = e.id
+        ORDER BY e.id, sh.start_date DESC
+    """, conn)
+
+def get_employee_base_salary_info(conn, emp_id, year, month):
+    _, month_end = get_monthly_dates(year, month)
+    sql = "SELECT base_salary, insurance_salary, dependents FROM salary_base_history WHERE employee_id = ? AND start_date <= ? ORDER BY start_date DESC LIMIT 1"
+    return conn.execute(sql, (emp_id, month_end)).fetchone()
 
 # --- Salary & Bonus Queries ---
 def get_item_types(conn):
