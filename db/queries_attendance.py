@@ -77,3 +77,65 @@ def get_employee_leave_summary(conn, emp_id, year, month):
     month_str = f"{year}-{month:02d}"
     sql = "SELECT leave_type, SUM(duration) FROM leave_record WHERE employee_id = ? AND strftime('%Y-%m', start_date) = ? AND status = '已通過' GROUP BY leave_type"
     return conn.execute(sql, (emp_id, month_str)).fetchall()
+
+# --- NEW: 請假紀錄相關 ---
+
+def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
+    """
+    批次插入或更新請假紀錄。
+    以「假單申請ID (request_id)」為唯一鍵，如果已存在則更新，否則新增。
+    """
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN TRANSACTION")
+        
+        df_to_import = df.copy()
+        
+        # 建立 employee_id
+        emp_map = pd.read_sql_query("SELECT name_ch, id FROM employee", conn)
+        emp_dict = dict(zip(emp_map['name_ch'], emp_map['id']))
+        df_to_import['employee_id'] = df_to_import['Employee Name'].map(emp_dict)
+
+        # 篩選掉沒有成功匹配到員工ID的紀錄
+        df_to_import.dropna(subset=['employee_id'], inplace=True)
+        df_to_import['employee_id'] = df_to_import['employee_id'].astype(int)
+
+        sql = """
+        INSERT INTO leave_record (
+            employee_id, request_id, leave_type, start_date, end_date,
+            duration, reason, status, approver, submit_date, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(request_id) DO UPDATE SET
+            employee_id=excluded.employee_id,
+            leave_type=excluded.leave_type,
+            start_date=excluded.start_date,
+            end_date=excluded.end_date,
+            duration=excluded.duration,
+            status=excluded.status,
+            note='UPDATED_FROM_UI'
+        """
+        
+        data_tuples = []
+        for _, row in df_to_import.iterrows():
+            data_tuples.append((
+                row['employee_id'],
+                row['Request ID'],
+                row['Type of Leave'],
+                # 確保日期時間格式正確寫入資料庫
+                pd.to_datetime(row['Start Date']).strftime('%Y-%m-%d %H:%M:%S'),
+                pd.to_datetime(row['End Date']).strftime('%Y-%m-%d %H:%M:%S'),
+                row['核算時數'], # 使用我們核算過後的時數
+                row.get('Details'),
+                row.get('Status'),
+                row.get('Approver Name'),
+                pd.to_datetime(row.get('Date Submitted')).strftime('%Y-%m-%d') if pd.notna(row.get('Date Submitted')) else None,
+                row.get('備註')
+            ))
+
+        cursor.executemany(sql, data_tuples)
+        conn.commit()
+        return len(data_tuples)
+        
+    except Exception as e:
+        conn.rollback()
+        raise e
