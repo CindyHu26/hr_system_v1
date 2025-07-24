@@ -1,21 +1,22 @@
+# app.py
 import streamlit as st
 from db.db_manager import init_connection
 from pages import (
-    employee_management, 
+    employee_management,
     company_management,
     insurance_history,
     attendance_management,
     special_attendance,
     leave_analysis,
     salary_item_management,
-    insurance_grade_management,
+    insurance_grade_management, 
     salary_base_history,
-    allowance_setting,
-    bonus_batch,
+    allowance_setting,          
+    bonus_batch,                
     salary_calculation,
-    annual_summary,
-    nhi_summary,
-    annual_leave
+    annual_summary,             
+    nhi_summary,                
+    annual_leave                
 )
 
 # --- 頁面設定 ---
@@ -67,11 +68,14 @@ page_groups = {
 selected_group = st.sidebar.selectbox("選擇功能區塊", list(page_groups.keys()))
 
 selected_page_name = st.sidebar.radio(
-    f"--- {selected_group} ---", 
+    f"--- {selected_group} ---",
     page_groups[selected_group],
     label_visibility="collapsed"
 )
 
 # 執行選定的頁面
-page_to_show = ALL_PAGES[selected_page_name]
-page_to_show.show_page(conn)
+page_to_show = ALL_PAGES.get(selected_page_name)
+if page_to_show:
+    page_to_show.show_page(conn)
+else:
+    st.warning(f"頁面「{selected_page_name}」功能似乎未正確對應，請檢查 app.py。")
