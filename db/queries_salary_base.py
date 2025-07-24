@@ -60,7 +60,6 @@ def batch_update_base_salary(conn, preview_df: pd.DataFrame, new_wage: int, effe
         conn.rollback()
         raise e
 
-# --- 【新增函式】 ---
 def get_batch_employee_insurance_salary(conn, emp_ids: list, year: int, month: int):
     """批次獲取多名員工在特定時間點的投保薪資。"""
     if not emp_ids:
@@ -71,3 +70,46 @@ def get_batch_employee_insurance_salary(conn, emp_ids: list, year: int, month: i
         base_info = get_employee_base_salary_info(conn, emp_id, year, month)
         salaries[emp_id] = base_info['insurance_salary'] if base_info and base_info['insurance_salary'] else (base_info['base_salary'] if base_info else 0)
     return salaries
+
+def batch_add_or_update_salary_base_history(conn, df: pd.DataFrame):
+    cursor = conn.cursor()
+    report = {'inserted': 0, 'updated': 0, 'errors': []}
+    
+    # 【修改】預先載入員工姓名映射表
+    emp_map = pd.read_sql("SELECT name_ch, id FROM employee", conn).set_index('name_ch')['id'].to_dict()
+
+    sql = """
+    INSERT INTO salary_base_history (employee_id, base_salary, insurance_salary, dependents, start_date, end_date, note)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(employee_id, start_date) DO UPDATE SET
+        base_salary = excluded.base_salary,
+        insurance_salary = excluded.insurance_salary,
+        dependents = excluded.dependents,
+        end_date = excluded.end_date,
+        note = excluded.note;
+    """
+
+    try:
+        data_to_upsert = []
+        for index, row in df.iterrows():
+            # 【修改】從姓名取得 emp_id
+            emp_id = emp_map.get(row['name_ch'])
+            if not emp_id:
+                report['errors'].append({'row': index + 2, 'reason': f"找不到員工姓名 '{row['name_ch']}'。"})
+                continue
+            
+            data_to_upsert.append((
+                emp_id, row['base_salary'], row['insurance_salary'], row['dependents'],
+                row['start_date'], row.get('end_date'), row.get('note')
+            ))
+        
+        if data_to_upsert:
+            cursor.executemany(sql, data_to_upsert)
+            conn.commit()
+            report['updated'] = cursor.rowcount
+            
+    except Exception as e:
+        conn.rollback()
+        report['errors'].append({'row': 'N/A', 'reason': f'資料庫操作失敗: {e}'})
+        
+    return report

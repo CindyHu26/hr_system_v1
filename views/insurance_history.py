@@ -1,11 +1,23 @@
 # pages/insurance_history.py
 import streamlit as st
 import pandas as pd
+
 from datetime import datetime
-# 修正 import
 from db import queries_insurance as q_ins
 from db import queries_employee as q_emp
 from db import queries_common as q_common
+
+from utils.ui_components import create_batch_import_section
+from services import insurance_logic as logic_ins
+
+# 定義範本欄位
+INSURANCE_TEMPLATE_COLUMNS = {
+    'name_ch': '員工姓名*',
+    'company_name': '加保單位名稱*',
+    'start_date': '加保日期*(YYYY-MM-DD)',
+    'end_date': '退保日期(YYYY-MM-DD)',
+    'note': '備註'
+}
 
 def show_page(conn):
     st.header("📄 員工加保管理")
@@ -24,7 +36,7 @@ def show_page(conn):
     st.write("---")
     st.subheader("資料操作")
     
-    tab1, tab2 = st.tabs([" ✨ 新增紀錄", "✏️ 修改/刪除紀錄"])
+    tab1, tab2, tab3 = st.tabs([" ✨ 新增紀錄", "✏️ 修改/刪除紀錄", "🚀 批次匯入 (Excel)"])
 
     with tab1:
         st.markdown("#### 新增一筆加保紀錄")
@@ -85,3 +97,11 @@ def show_page(conn):
                         q_common.delete_record(conn, 'employee_company_history', record_id)
                         st.warning(f"紀錄 ID:{record_id} 已刪除！")
                         st.rerun()
+    with tab3:
+        create_batch_import_section(
+            info_text="說明：系統會以「員工姓名」、「加保單位名稱」和「加保日期」為唯一鍵，若紀錄已存在則會更新，否則新增。",
+            template_columns=INSURANCE_TEMPLATE_COLUMNS,
+            template_file_name="insurance_history_template.xlsx",
+            import_logic_func=logic_ins.batch_import_insurance_history,
+            conn=conn
+        )

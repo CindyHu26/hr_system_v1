@@ -3,11 +3,17 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 
-# 導入新的、拆分後的查詢模組
-# 【關鍵修正】將 q_items 改為 q_base，並從正確的檔案匯入
 from db import queries_salary_base as q_base 
 from db import queries_employee as q_emp
 from utils.helpers import to_date
+from utils.ui_components import create_batch_import_section
+from services import salary_base_logic as logic_base
+
+SALARY_BASE_TEMPLATE_COLUMNS = {
+    'name_ch': '員工姓名*', 'base_salary': '底薪*', 'insurance_salary': '勞健保投保薪資*',
+    'dependents': '健保眷屬數*', 'start_date': '生效日*(YYYY-MM-DD)', 
+    'end_date': '結束日(YYYY-MM-DD)', 'note': '備註'
+}
 
 def show_page(conn):
     st.header("📈 薪資基準管理")
@@ -71,7 +77,7 @@ def show_page(conn):
 
     st.write("---")
     
-    tab1, tab2 = st.tabs([" ✨ 新增紀錄", "✏️ 修改/刪除紀錄"])
+    tab1, tab2, tab3 = st.tabs([" ✨ 新增紀錄", "✏️ 修改/刪除紀錄", "🚀 批次匯入 (Excel)"])
 
     with tab1:
         emp_df = q_emp.get_all_employees(conn)
@@ -145,3 +151,12 @@ def show_page(conn):
                         st.rerun()
         else:
             st.info("目前沒有可供修改或刪除的紀錄。")
+
+    with tab3:
+        create_batch_import_section(
+            info_text="說明：系統會以「員工姓名」和「生效日」為唯一鍵，若紀錄已存在則會更新，否則新增。",
+            template_columns=SALARY_BASE_TEMPLATE_COLUMNS,
+            template_file_name="salary_base_template.xlsx",
+            import_logic_func=logic_base.batch_import_salary_base,
+            conn=conn
+        )

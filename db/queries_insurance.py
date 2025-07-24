@@ -77,3 +77,46 @@ def batch_insert_or_replace_grades(conn, df: pd.DataFrame, grade_type: str, star
     except Exception as e:
         conn.rollback()
         raise e
+    
+# 批次新增或更新員工加保紀錄
+def batch_add_or_update_insurance_history(conn, df: pd.DataFrame):
+    cursor = conn.cursor()
+    report = {'inserted': 0, 'updated': 0, 'errors': []}
+    
+    # 預先載入員工姓名映射表
+    emp_map = pd.read_sql("SELECT name_ch, id FROM employee", conn).set_index('name_ch')['id'].to_dict()
+    comp_map = pd.read_sql("SELECT name, id FROM company", conn).set_index('name')['id'].to_dict()
+
+    sql_insert = "INSERT INTO employee_company_history (employee_id, company_id, start_date, end_date, note) VALUES (?, ?, ?, ?, ?)"
+    sql_update = "UPDATE employee_company_history SET end_date = ?, note = ? WHERE id = ?"
+    sql_check = "SELECT id FROM employee_company_history WHERE employee_id = ? AND company_id = ? AND start_date = ?"
+
+    try:
+        cursor.execute("BEGIN TRANSACTION")
+        for index, row in df.iterrows():
+            # 【修改】從姓名取得 emp_id
+            emp_id = emp_map.get(row['name_ch'])
+            comp_id = comp_map.get(row['company_name'])
+
+            if not emp_id:
+                report['errors'].append({'row': index + 2, 'reason': f"找不到員工姓名 '{row['name_ch']}'。"})
+                continue
+            if not comp_id:
+                report['errors'].append({'row': index + 2, 'reason': f"找不到公司名稱 '{row['company_name']}'。"})
+                continue
+
+            existing_record = cursor.execute(sql_check, (emp_id, comp_id, row['start_date'])).fetchone()
+            
+            if existing_record:
+                cursor.execute(sql_update, (row.get('end_date'), row.get('note'), existing_record['id']))
+                report['updated'] += 1
+            else:
+                cursor.execute(sql_insert, (emp_id, comp_id, row['start_date'], row.get('end_date'), row.get('note')))
+                report['inserted'] += 1
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        report['errors'].append({'row': 'N/A', 'reason': f'資料庫操作失敗: {e}'})
+    
+    return report
