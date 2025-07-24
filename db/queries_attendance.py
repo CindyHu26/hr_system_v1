@@ -115,12 +115,10 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
         
         df_to_import = df.copy()
         
-        # 建立 employee_id
         emp_map = pd.read_sql_query("SELECT name_ch, id FROM employee", conn)
         emp_dict = dict(zip(emp_map['name_ch'], emp_map['id']))
         df_to_import['employee_id'] = df_to_import['Employee Name'].map(emp_dict)
 
-        # 篩選掉沒有成功匹配到員工ID的紀錄
         df_to_import.dropna(subset=['employee_id'], inplace=True)
         df_to_import['employee_id'] = df_to_import['employee_id'].astype(int)
 
@@ -141,18 +139,21 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
         
         data_tuples = []
         for _, row in df_to_import.iterrows():
+            # 【關鍵修正點】將 'Date Submitted' 改為 'Submission Date'
+            submit_date_val = row.get('Submission Date')
+            submit_date_str = pd.to_datetime(submit_date_val).strftime('%Y-%m-%d') if pd.notna(submit_date_val) else None
+            
             data_tuples.append((
                 row['employee_id'],
                 row['Request ID'],
                 row['Type of Leave'],
-                # 確保日期時間格式正確寫入資料庫
                 pd.to_datetime(row['Start Date']).strftime('%Y-%m-%d %H:%M:%S'),
                 pd.to_datetime(row['End Date']).strftime('%Y-%m-%d %H:%M:%S'),
-                row['核算時數'], # 使用我們核算過後的時數
+                row['核算時數'],
                 row.get('Details'),
                 row.get('Status'),
                 row.get('Approver Name'),
-                pd.to_datetime(row.get('Date Submitted')).strftime('%Y-%m-%d') if pd.notna(row.get('Date Submitted')) else None,
+                submit_date_str,
                 row.get('備註')
             ))
 

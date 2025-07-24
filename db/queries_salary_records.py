@@ -21,14 +21,14 @@ def get_salary_report_for_editing(conn, year, month):
 
     salary_main_df = pd.read_sql_query("SELECT * FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
     details_query = """
-    SELECT s.employee_id, si.name as item_name, sd.amount 
-    FROM salary_detail sd 
-    JOIN salary_item si ON sd.salary_item_id = si.id 
-    JOIN salary s ON sd.salary_id = s.id 
+    SELECT s.employee_id, si.name as item_name, sd.amount
+    FROM salary_detail sd
+    JOIN salary_item si ON sd.salary_item_id = si.id
+    JOIN salary s ON sd.salary_id = s.id
     WHERE s.year = ? AND s.month = ?
     """
     details_df = pd.read_sql_query(details_query, conn, params=(year, month))
-    
+
     pivot_details = pd.DataFrame()
     if not details_df.empty:
         pivot_details = details_df.pivot_table(index='employee_id', columns='item_name', values='amount').reset_index()
@@ -39,11 +39,11 @@ def get_salary_report_for_editing(conn, year, month):
 
     report_df['status'] = report_df['status'].fillna('draft')
     item_types = pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
-    
+
     for item in item_types.keys():
         if item not in report_df.columns: report_df[item] = 0
     report_df.fillna(0, inplace=True)
-            
+
     earning_cols = [c for c, t in item_types.items() if t == 'earning' and c in report_df.columns]
     deduction_cols = [c for c, t in item_types.items() if t == 'deduction' and c in report_df.columns]
 
@@ -63,10 +63,10 @@ def get_salary_report_for_editing(conn, year, month):
         report_df.loc[final_mask, '匯入銀行'] = report_df.loc[final_mask, 'bank_transfer_amount']
         report_df.loc[final_mask, '現金'] = report_df.loc[final_mask, 'cash_amount']
 
-    final_cols = ['員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實發薪資', '匯入銀行', '現金']
+    final_cols = ['employee_id', '員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實發薪資', '匯入銀行', '現金']
     for col in final_cols:
         if col not in report_df.columns: report_df[col] = 0
-            
+
     return report_df[final_cols].sort_values(by='員工編號').reset_index(drop=True), item_types
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):
@@ -124,6 +124,7 @@ def batch_upsert_salary_details(conn, data_to_upsert: list):
     cursor = conn.cursor()
     try:
         cursor.execute("BEGIN TRANSACTION")
+        # 確保 unique index 存在，這是 ON CONFLICT 的前提
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_salary_item ON salary_detail (salary_id, salary_item_id);")
         sql = """
             INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)
@@ -134,3 +135,25 @@ def batch_upsert_salary_details(conn, data_to_upsert: list):
         return cursor.rowcount
     except Exception as e:
         conn.rollback(); raise e
+
+# --- 【新增函式】 ---
+def get_annual_salary_summary_data(conn, year: int, item_ids: list):
+    """獲取年度薪資總表的原始資料。"""
+    if not item_ids:
+        return pd.DataFrame()
+    placeholders = ','.join('?' for _ in item_ids)
+    query = f"""
+    SELECT
+        e.hr_code as '員工編號',
+        e.name_ch as '員工姓名',
+        s.month,
+        SUM(sd.amount) as monthly_total
+    FROM salary_detail sd
+    JOIN salary s ON sd.salary_id = s.id
+    JOIN employee e ON s.employee_id = e.id
+    WHERE s.year = ? AND sd.salary_item_id IN ({placeholders})
+    GROUP BY e.id, s.month
+    ORDER BY e.hr_code, s.month;
+    """
+    params = [year] + item_ids
+    return pd.read_sql_query(query, conn, params=params)

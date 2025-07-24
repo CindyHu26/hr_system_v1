@@ -9,116 +9,93 @@ import requests
 import io
 from datetime import datetime, time, date, timedelta
 import traceback
+import streamlit as st
+from bs4 import BeautifulSoup # 【關鍵修正 1】補上缺少的 import
 
-# --- 讀取與解析 ---
+# --- 核心功能函式 ---
 
-def read_leave_file(source_input):
-    """
-    從 Google Sheet URL 或上傳的檔案中讀取請假資料。
-    會自動將 Google Sheet 分享連結轉換為可下載的 CSV 連結。
-    """
-    try:
-        if isinstance(source_input, str) and "docs.google.com/spreadsheets" in source_input:
-            # 將標準的 Google Sheet 連結轉換為 CSV 下載連結
-            csv_export_url = source_input.replace('/edit?usp=sharing', '/export?format=csv')
-            response = requests.get(csv_export_url)
-            response.raise_for_status()
-            # 將下載的內容當作一個檔案來讀取
-            source = io.StringIO(response.text)
-        else: # 處理上傳的檔案物件
-            source = source_input
-
-        # 將所有資料讀取為字串，避免日期等格式被自動轉換錯誤
-        df = pd.read_csv(source, dtype=str).fillna("")
-        
-        # 只處理已通過的假單
-        df = df[df['Status'] == '已通過'].copy()
-        if df.empty:
-            raise ValueError("找不到任何狀態為「已通過」的假單。")
-
-        # --- 關鍵的日期時間解析 ---
-        # 為了處理 'YYYY/MM/DD' 和 'YYYY/MM/DD HH:MM:SS' 兩種混合格式
-        df['Start Date'] = pd.to_datetime(df['Start Date'], errors='coerce')
-        df['End Date'] = pd.to_datetime(df['End Date'], errors='coerce')
-        df['Date Submitted'] = pd.to_datetime(df['Date Submitted'], errors='coerce')
-        
-        # 移除解析失敗的行
-        df.dropna(subset=['Start Date', 'End Date'], inplace=True)
-
-        return df
-    except Exception as e:
-        raise ValueError(f"讀取或解析請假檔案時發生錯誤: {e}")
-
-
-# --- 時數計算 ---
-
+@st.cache_data
 def fetch_taiwan_calendar(year: int):
     """
-    獲取指定年份的台灣政府行政機關辦公日曆。
-    注意：此為簡易範例，政府網站可能改版。為求穩定，暫時返回空集合。
-    未來可替換為更可靠的 API 或手動維護假日列表。
+    從政府資料開放平臺抓取指定年份的行事曆，並解析出假日與補班日。
+    使用快取確保同一年份只抓取一次。
     """
+    st.info(f"正在從網路同步 {year} 年的台灣政府行政機關行事曆...")
     try:
-        # 範例：從政府開放資料平台獲取資料 (需注意 API 變動)
-        # url = f"https://data.gov.tw/api/v2/rest/dataset/100142" 
-        # response = requests.get(url)
-        # data = response.json()
-        # ... 解析 data 的邏輯 ...
-        st.warning(f"注意：目前為開發模式，未實際抓取 {year} 年的台灣行事曆。")
-        holidays = set() # 應為假日
-        workdays = set() # 應為補班日
+        dataset_url = "https://data.gov.tw/dataset/14718"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(dataset_url, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        link_element = soup.select_one("a.btn.btn-outline-secondary[href$='.csv']")
+        
+        if not link_element:
+            st.error("在政府資料開放平臺上找不到 CSV 下載連結，網站結構可能已變更。")
+            return set(), set()
+            
+        csv_url = link_element['href']
+        
+        response = requests.get(csv_url, headers=headers)
+        response.raise_for_status()
+        
+        csv_content = response.content.decode('utf-8-sig')
+        df = pd.read_csv(io.StringIO(csv_content))
+
+        df['date'] = pd.to_datetime(df['date'], format='%Y%m%d').dt.date
+        
+        holidays = set(df[df['isHoliday'] == '2']['date'])
+        workdays = set(df[df['isHoliday'] == '0']['date'])
+        
+        st.success(f"成功同步 {year} 年行事曆！")
         return holidays, workdays
+
     except Exception as e:
-        print(f"無法獲取台灣行事曆資料：{e}")
+        st.error(f"抓取 {year} 年行事曆時發生錯誤: {e}")
         return set(), set()
 
-def calculate_leave_hours(start_dt, end_dt, is_full_day):
+def calculate_leave_hours(start_dt, end_dt):
     """
-    精確計算請假時數，支援跨日、自動排除週末與假日、扣除午休。
+    接收 datetime 物件，精確計算請假時數。
     """
     if pd.isna(start_dt) or pd.isna(end_dt) or end_dt < start_dt:
         return 0.0
 
-    holidays, makeup_workdays = fetch_taiwan_calendar(start_dt.year)
-    if start_dt.year != end_dt.year:
-        h, w = fetch_taiwan_calendar(end_dt.year)
-        holidays.update(h)
-        makeup_workdays.update(w)
+    is_full_day = start_dt.time() == time(0, 0)
+
+    years_to_fetch = set(range(start_dt.year, end_dt.year + 1))
+    all_holidays, all_makeup_workdays = set(), set()
+    for year_to_fetch in years_to_fetch:
+        h, w = fetch_taiwan_calendar(year_to_fetch)
+        all_holidays.update(h)
+        all_makeup_workdays.update(w)
         
     total_hours = 0.0
-    
-    # 定義公司工時與午休時間
-    work_start, lunch_start = time(8, 30), time(12, 0)
-    lunch_end, work_end = time(13, 0), time(17, 30)
+    work_start, lunch_start = time(8, 0), time(12, 0)
+    lunch_end, work_end = time(13, 0), time(17, 0)
     
     current_date = start_dt.date()
     while current_date <= end_dt.date():
-        # 判斷是否為工作日
         is_weekend = current_date.weekday() >= 5
-        is_holiday = current_date in holidays
-        is_makeup_workday = current_date in makeup_workdays
+        is_holiday = current_date in all_holidays
+        is_makeup_workday = current_date in all_makeup_workdays
         
-        # 如果是週末且不是補班日，或 是假日且不是補班日 -> 跳過
         if (is_weekend and not is_makeup_workday) or (is_holiday and not is_makeup_workday):
             current_date += timedelta(days=1)
             continue
 
-        # 根據是否為全天假，決定當天的請假時間範圍
-        if is_full_day:
-            day_leave_start = work_start
-            day_leave_end = work_end
-        else:
-            day_leave_start = start_dt.time() if current_date == start_dt.date() else time.min
-            day_leave_end = end_dt.time() if current_date == end_dt.date() else time.max
+        day_leave_start = start_dt.time() if current_date == start_dt.date() else time.min
+        day_leave_end = end_dt.time() if current_date == end_dt.date() else time.max
         
-        # 計算上午工時交集
+        if is_full_day:
+            day_leave_start, day_leave_end = work_start, work_end
+        
         am_overlap_start = max(day_leave_start, work_start)
         am_overlap_end = min(day_leave_end, lunch_start)
         if am_overlap_end > am_overlap_start:
             duration = datetime.combine(date.today(), am_overlap_end) - datetime.combine(date.today(), am_overlap_start)
             total_hours += duration.total_seconds() / 3600
 
-        # 計算下午工時交集
         pm_overlap_start = max(day_leave_start, lunch_end)
         pm_overlap_end = min(day_leave_end, work_end)
         if pm_overlap_end > pm_overlap_start:
@@ -129,42 +106,81 @@ def calculate_leave_hours(start_dt, end_dt, is_full_day):
         
     return round(total_hours, 2)
 
-
-def check_and_calculate_all_leave_hours(df: pd.DataFrame):
+# 【關鍵修正 2】將所有邏輯整合到這個函式中，採用舊專案的穩健流程
+def process_leave_file(source_input, year=None, month=None):
     """
-    遍歷 DataFrame 中所有的假單，計算其核算時數。
+    整合了讀取、篩選、計算的單一主函式。
     """
-    results = []
-    df['is_full_day'] = df['Start Date'].dt.time == time(0, 0)
+    try:
+        # 步驟 1: 讀取並初步篩選出已通過的假單 (日期保持為字串)
+        source_bytes = None
+        if isinstance(source_input, str) and "docs.google.com/spreadsheets" in source_input:
+            csv_export_url = source_input.replace('/edit?usp=sharing', '/export?format=csv')
+            response = requests.get(csv_export_url)
+            response.raise_for_status()
+            source_bytes = response.content
+        else:
+            source_bytes = source_input.getvalue()
 
-    for _, row in df.iterrows():
-        try:
-            leave_hours = calculate_leave_hours(row['Start Date'], row['End Date'], row['is_full_day'])
-            new_row = row.to_dict()
-            new_row["核算時數"] = leave_hours
-            # 將原始時數與核算時數做比較
-            original_duration = pd.to_numeric(row['Duration (Hours)'], errors='coerce')
-            if pd.notna(original_duration) and abs(original_duration - leave_hours) > 0.1:
-                new_row["備註"] = f"系統核算時數({leave_hours})與原單據時數({original_duration})不符"
+        content = source_bytes.decode('utf-8-sig')
+        df = pd.read_csv(io.StringIO(content), dtype=str).fillna("")
+        df.dropna(how='all', inplace=True)
+        df = df[df['Status'].str.strip() == '已通過'].copy()
+        
+        if df.empty:
+            raise ValueError("在整個資料來源中找不到任何「已通過」的假單。")
+
+        # 步驟 2: 逐筆處理：進行月份篩選並計算時數
+        processed_records = []
+        for _, row in df.iterrows():
+            try:
+                # 在迴圈內逐筆轉換日期，保留時間
+                start_date_obj = pd.to_datetime(row['Start Date'])
+                end_date_obj = pd.to_datetime(row['End Date'])
+
+                # 如果有指定月份，則進行篩選
+                if year is not None and month is not None:
+                    if not (start_date_obj.year == year and start_date_obj.month == month):
+                        continue # 不符合月份，跳過此筆紀錄
+
+                # 只有符合條件的假單才會觸發時數計算（和行事曆抓取）
+                leave_hours = calculate_leave_hours(start_date_obj, end_date_obj)
+                
+                new_row = row.to_dict()
+                new_row['Start Date'] = start_date_obj
+                new_row['End Date'] = end_date_obj
+                new_row["核算時數"] = leave_hours
+                
+                original_duration = pd.to_numeric(row.get('Duration (Hours)', row.get('Duration')), errors='coerce')
+                if pd.notna(original_duration) and abs(original_duration - leave_hours) > 0.1:
+                    new_row["備註"] = f"系統核算時數({leave_hours})與原單據時數({original_duration})不符"
+                else:
+                    new_row["備註"] = ""
+                
+                processed_records.append(new_row)
+
+            except Exception as e:
+                st.warning(f"跳過一筆無法處理的假單。Request ID: {row.get('Request ID', 'N/A')}, 錯誤: {e}")
+                continue
+
+        if not processed_records:
+            if year and month:
+                raise ValueError(f"在 {year} 年 {month} 月中，找不到任何有效的「已通過」假單紀錄。")
             else:
-                 new_row["備註"] = ""
-            results.append(new_row)
-        except Exception:
-            new_row = row.to_dict()
-            new_row["核算時數"] = 0.0
-            new_row["備註"] = f"時數核算時發生錯誤: {traceback.format_exc()}"
-            results.append(new_row)
-            
-    result_df = pd.DataFrame(results)
-    
-    # 重新排列欄位順序，讓重要資訊靠前
-    cols_order = [
-        'Employee Name', 'Type of Leave', 'Start Date', 'End Date', 
-        'Duration (Hours)', '核算時數', '備註', 'Request ID', 'Status'
-    ]
-    # 篩選出 DataFrame 中實際存在的欄位
-    existing_cols = [col for col in cols_order if col in result_df.columns]
-    # 找出其他剩餘的欄位
-    other_cols = [col for col in result_df.columns if col not in existing_cols]
-    
-    return result_df[existing_cols + other_cols]
+                raise ValueError("找不到任何有效的「已通過」假單紀錄。")
+
+
+        # 步驟 3: 建立最終的 DataFrame
+        result_df = pd.DataFrame(processed_records)
+        
+        cols_order = [
+            'Employee Name', 'Type of Leave', 'Start Date', 'End Date',
+            'Duration', 'Duration (Hours)', '核算時數', '備註', 'Request ID', 'Status'
+        ]
+        existing_cols = [col for col in cols_order if col in result_df.columns]
+        other_cols = [col for col in result_df.columns if col not in existing_cols]
+        
+        return result_df[existing_cols + other_cols]
+
+    except Exception as e:
+        raise ValueError(f"處理請假檔案時發生錯誤: {e}")

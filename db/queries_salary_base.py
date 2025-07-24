@@ -24,12 +24,12 @@ def get_employees_below_minimum_wage(conn, new_minimum_wage: int):
     """找出所有在職且當前底薪低於指定薪資的員工。"""
     query = """
     WITH latest_salary AS (
-        SELECT 
+        SELECT
             employee_id, base_salary, insurance_salary, dependents,
             ROW_NUMBER() OVER(PARTITION BY employee_id ORDER BY start_date DESC) as rn
         FROM salary_base_history
     )
-    SELECT 
+    SELECT
         e.id as employee_id, e.name_ch as "員工姓名",
         ls.base_salary as "目前底薪", ls.insurance_salary as "目前投保薪資",
         ls.dependents as "目前眷屬數"
@@ -59,3 +59,15 @@ def batch_update_base_salary(conn, preview_df: pd.DataFrame, new_wage: int, effe
     except Exception as e:
         conn.rollback()
         raise e
+
+# --- 【新增函式】 ---
+def get_batch_employee_insurance_salary(conn, emp_ids: list, year: int, month: int):
+    """批次獲取多名員工在特定時間點的投保薪資。"""
+    if not emp_ids:
+        return {}
+    
+    salaries = {}
+    for emp_id in emp_ids:
+        base_info = get_employee_base_salary_info(conn, emp_id, year, month)
+        salaries[emp_id] = base_info['insurance_salary'] if base_info and base_info['insurance_salary'] else (base_info['base_salary'] if base_info else 0)
+    return salaries
