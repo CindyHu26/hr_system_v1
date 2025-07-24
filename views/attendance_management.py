@@ -33,6 +33,7 @@ def show_page(conn):
                 'id': '紀錄ID', 'hr_code': '員工編號', 'name_ch': '姓名', 'date': '日期',
                 'checkin_time': '簽到時間', 'checkout_time': '簽退時間', 'late_minutes': '遲到(分)',
                 'early_leave_minutes': '早退(分)', 'absent_minutes': '缺席(分)',
+                'leave_minutes': '請假(分)',
                 'overtime1_minutes': '加班1(分)', 'overtime2_minutes': '加班2(分)', 'overtime3_minutes': '加班3(分)',
                 'note': '備註'
             }), use_container_width=True)

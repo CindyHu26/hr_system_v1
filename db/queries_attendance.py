@@ -12,8 +12,8 @@ def get_attendance_by_month(conn, year, month):
     query = """
     SELECT
         a.id, e.hr_code, e.name_ch, a.date, a.checkin_time, a.checkout_time,
-        a.late_minutes, a.early_leave_minutes, a.absent_minutes, a.overtime1_minutes,
-        a.overtime2_minutes, a.overtime3_minutes, a.note
+        a.late_minutes, a.early_leave_minutes, a.absent_minutes, a.leave_minutes, 
+        a.overtime1_minutes, a.overtime2_minutes, a.overtime3_minutes, a.note
     FROM attendance a
     JOIN employee e ON a.employee_id = e.id
     WHERE STRFTIME('%Y-%m', a.date) = ?
@@ -143,10 +143,17 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
         
         data_tuples = []
         for _, row in df_to_import.iterrows():
-            # 【關鍵修正點】將 'Date Submitted' 改為 'Submission Date'
+            # --- 【關鍵修正點】 ---
+            # 先嘗試轉換日期，如果失敗或為空，則設為 None
             submit_date_val = row.get('Submission Date')
-            submit_date_str = pd.to_datetime(submit_date_val).strftime('%Y-%m-%d') if pd.notna(submit_date_val) else None
+            parsed_submit_date = pd.to_datetime(submit_date_val, errors='coerce')
             
+            if pd.isna(parsed_submit_date):
+                submit_date_str = None
+            else:
+                submit_date_str = parsed_submit_date.strftime('%Y-%m-%d')
+            # --- 修正結束 ---
+
             data_tuples.append((
                 row['employee_id'],
                 row['Request ID'],
