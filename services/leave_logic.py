@@ -12,6 +12,7 @@ from datetime import datetime, time, date, timedelta
 import traceback
 import streamlit as st
 from bs4 import BeautifulSoup
+from db import queries_attendance as q_att
 
 # --- 核心功能函式 ---
 
@@ -236,3 +237,46 @@ def process_leave_file(source_input, year=None, month=None):
                     else:
                         st.warning(f"⚠️ {msg}")
         raise ValueError(f"處理請假檔案時發生錯誤: {e}")
+
+def analyze_attendance_leave_conflicts(conn, year: int, month: int):
+    """
+    交叉比對指定月份的缺席紀錄與請假單，找出異常。
+    """
+    absent_df, leave_df = q_att.get_monthly_absent_and_leave_data(conn, year, month)
+    
+    if absent_df.empty:
+        return pd.DataFrame() # 如果沒有任何缺席紀錄，就沒有可分析的
+
+    conflict_records = []
+    
+    # 將 leave_df 的日期轉為 datetime 物件以便比對
+    leave_df['start_date'] = pd.to_datetime(leave_df['start_date']).dt.date
+    leave_df['end_date'] = pd.to_datetime(leave_df['end_date']).dt.date
+
+    # 逐一檢查每一筆缺席紀錄
+    for _, absent_row in absent_df.iterrows():
+        emp_id = absent_row['employee_id']
+        absent_date = pd.to_datetime(absent_row['date']).date()
+        
+        # 篩選出該員工的所有假單
+        employee_leaves = leave_df[leave_df['employee_id'] == emp_id]
+        
+        # 檢查缺席當天是否落在任何一筆假單的區間內
+        is_on_leave = any(
+            leave['start_date'] <= absent_date <= leave['end_date']
+            for _, leave in employee_leaves.iterrows()
+        )
+        
+        # 如果缺席了，卻沒有找到對應的假單，就記錄下來
+        if not is_on_leave:
+            conflict_records.append({
+                '員工姓名': absent_row['name_ch'],
+                '缺席日期': absent_date.strftime('%Y-%m-%d'),
+                '缺席分鐘數': absent_row['absent_minutes'],
+                '分析結果': '⚠️ 異常：有缺席紀錄但查無對應假單'
+            })
+            
+    if not conflict_records:
+        return pd.DataFrame({'分析結果': ['✅ 完美！所有缺席紀錄都有對應的請假單。']})
+        
+    return pd.DataFrame(conflict_records)

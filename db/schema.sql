@@ -27,10 +27,12 @@ CREATE TABLE IF NOT EXISTS attendance (
     id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL, date DATE NOT NULL,
     checkin_time TIME, checkout_time TIME, late_minutes INTEGER DEFAULT 0,
     early_leave_minutes INTEGER DEFAULT 0, absent_minutes INTEGER DEFAULT 0,
+    leave_minutes INTEGER DEFAULT 0,
     overtime1_minutes INTEGER DEFAULT 0, overtime2_minutes INTEGER DEFAULT 0,
     overtime3_minutes INTEGER DEFAULT 0, note TEXT, source_file TEXT,
     FOREIGN KEY(employee_id) REFERENCES employee(id), UNIQUE(employee_id, date)
 );
+
 
 -- 特別出勤紀錄表
 CREATE TABLE IF NOT EXISTS special_attendance (

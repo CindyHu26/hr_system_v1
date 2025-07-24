@@ -7,8 +7,7 @@ from db import queries_employee as q_emp
 
 def read_attendance_file(file):
     """
-    從上傳的類 Excel 檔案中讀取並解析出勤資料。
-    此函式源自舊版 utils.py，針對新架構進行了微調。
+    從上傳的類 Excel 檔案中讀取並解析出勤資料。(使用 read_html)
     """
     file.seek(0)
     # 忽略 pandas 讀取 html 時可能出現的 UserWarning
@@ -38,16 +37,21 @@ def read_attendance_file(file):
         df = df[df['人員 ID'].astype(str).str.contains('^A[0-9]', na=False)].reset_index(drop=True)
         df.columns = df.columns.str.replace(' ', '') # 移除欄位名稱中的空格
 
+        # 【修改】在欄位對應中加入 "請假"
         column_mapping = {
             '人員ID': 'hr_code', '名稱': 'name_ch', '日期': 'date', '簽到': 'checkin_time',
             '簽退': 'checkout_time', '遲到': 'late_minutes', '早退': 'early_leave_minutes',
             '缺席': 'absent_minutes', '加班1': 'overtime1_minutes', '加班2': 'overtime2_minutes',
-            '加班3': 'overtime3_minutes'
+            '加班3': 'overtime3_minutes', '請假': 'leave_minutes' # 新增此行
         }
         df = df.rename(columns=column_mapping)
         
-        # 將時間相關的分鐘數欄位轉換為數字，處理無資料或格式錯誤的情況
-        numeric_cols = ['late_minutes', 'early_leave_minutes', 'absent_minutes', 'overtime1_minutes', 'overtime2_minutes', 'overtime3_minutes']
+        # 【修改】將 leave_minutes 加入數字處理列表
+        numeric_cols = [
+            'late_minutes', 'early_leave_minutes', 'absent_minutes', 
+            'overtime1_minutes', 'overtime2_minutes', 'overtime3_minutes',
+            'leave_minutes' # 新增此行
+        ]
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.extract(r'(\d+)').fillna(0)
@@ -59,7 +63,7 @@ def read_attendance_file(file):
         return df, "檔案解析成功"
     except Exception as e:
         return None, f"解析出勤檔案時發生未知錯誤：{e}"
-
+    
 def match_employees_by_name(conn, attendance_df: pd.DataFrame):
     """
     使用「姓名」作為唯一匹配鍵，為出勤紀錄 DataFrame 加上 employee_id。

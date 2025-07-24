@@ -24,7 +24,6 @@ def get_attendance_by_month(conn, year, month):
 def batch_insert_or_update_attendance(conn, df: pd.DataFrame):
     """
     批次插入或更新出勤紀錄。
-    如果員工在同一天的紀錄已存在，則會更新，否則新增。
     """
     df_to_insert = df[pd.notna(df['employee_id'])].copy()
     if df_to_insert.empty:
@@ -35,24 +34,27 @@ def batch_insert_or_update_attendance(conn, df: pd.DataFrame):
     sql = """
         INSERT INTO attendance (
             employee_id, date, checkin_time, checkout_time, late_minutes, early_leave_minutes,
-            absent_minutes, overtime1_minutes, overtime2_minutes, overtime3_minutes, source_file
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            absent_minutes, leave_minutes, overtime1_minutes, overtime2_minutes, overtime3_minutes, source_file
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(employee_id, date) DO UPDATE SET
             checkin_time=excluded.checkin_time,
             checkout_time=excluded.checkout_time,
             late_minutes=excluded.late_minutes,
             early_leave_minutes=excluded.early_leave_minutes,
             absent_minutes=excluded.absent_minutes,
+            leave_minutes=excluded.leave_minutes,
             overtime1_minutes=excluded.overtime1_minutes,
             overtime2_minutes=excluded.overtime2_minutes,
             overtime3_minutes=excluded.overtime3_minutes,
             source_file=excluded.source_file;
     """
 
+    # 【修改】資料元組中加入 leave_minutes
     data_tuples = [
         (
             row['employee_id'], row['date'], row.get('checkin_time'), row.get('checkout_time'),
             row.get('late_minutes', 0), row.get('early_leave_minutes', 0), row.get('absent_minutes', 0),
+            row.get('leave_minutes', 0), # 新增欄位
             row.get('overtime1_minutes', 0), row.get('overtime2_minutes', 0), row.get('overtime3_minutes', 0),
             'excel_import'
         ) for _, row in df_to_insert.iterrows()
@@ -96,10 +98,12 @@ def get_monthly_attendance_summary(conn, year, month):
     """獲取指定月份的考勤總結，用於薪資計算。"""
     _, month_end = get_monthly_dates(year, month)
     month_str = month_end[:7] # YYYY-MM
+    # 查詢中加入 SUM(leave_minutes)
     query = """
     SELECT employee_id, 
            SUM(overtime1_minutes) as overtime1_minutes, SUM(overtime2_minutes) as overtime2_minutes, 
-           SUM(late_minutes) as late_minutes, SUM(early_leave_minutes) as early_leave_minutes 
+           SUM(late_minutes) as late_minutes, SUM(early_leave_minutes) as early_leave_minutes,
+           SUM(leave_minutes) as leave_minutes
     FROM attendance WHERE STRFTIME('%Y-%m', date) = ? GROUP BY employee_id
     """
     return pd.read_sql_query(query, conn, params=(month_str,)).set_index('employee_id')
@@ -164,3 +168,40 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
     except Exception as e:
         conn.rollback()
         raise e
+    
+# 用於交叉分析的查詢函式
+def get_monthly_absent_and_leave_data(conn, year: int, month: int):
+    """
+    獲取指定月份所有員工的缺席紀錄（從 attendance）和請假紀錄（從 leave_record）。
+    """
+    month_str = f"{year}-{month:02d}"
+    
+    # 查詢所有有「缺席分鐘數」的打卡紀錄
+    absent_query = """
+    SELECT 
+        e.id as employee_id,
+        e.name_ch,
+        a.date,
+        a.absent_minutes
+    FROM attendance a
+    JOIN employee e ON a.employee_id = e.id
+    WHERE STRFTIME('%Y-%m', a.date) = ? AND a.absent_minutes > 0
+    """
+    absent_df = pd.read_sql_query(absent_query, conn, params=(month_str,))
+    
+    # 查詢所有「已通過」的假單紀錄
+    leave_query = """
+    SELECT
+        e.id as employee_id,
+        lr.leave_type,
+        lr.start_date,
+        lr.end_date
+    FROM leave_record lr
+    JOIN employee e ON lr.employee_id = e.id
+    WHERE 
+        (STRFTIME('%Y-%m', lr.start_date) = ? OR STRFTIME('%Y-%m', lr.end_date) = ?)
+        AND lr.status = '已通過'
+    """
+    leave_df = pd.read_sql_query(leave_query, conn, params=(month_str, month_str))
+
+    return absent_df, leave_df

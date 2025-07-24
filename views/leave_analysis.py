@@ -86,14 +86,29 @@ def show_page(conn):
                     st.code(traceback.format_exc())
 
     with tab2:
-        st.subheader("交叉比對請假與出勤紀錄")
-        st.info("此功能會直接讀取 **資料庫中已匯入** 的假單，與出勤紀錄進行比對，找出異常情況。")
+        st.subheader("交叉比對缺勤紀錄與假單")
+        st.info("此功能會掃描指定月份中，所有員工在打卡機上的「缺席」紀錄，並與資料庫中「已通過」的假單進行比對，幫助您找出『有缺席但沒請假』的異常情況。")
         st.write("---")
         st.markdown("#### 請選擇比對月份")
+        
         c1, c2 = st.columns(2)
         today = datetime.now()
-        year_conflict = c1.number_input("年份", min_value=2020, max_value=today.year + 1, value=today.year, key="conflict_year")
-        month_conflict = c2.number_input("月份", min_value=1, max_value=12, value=today.month, key="conflict_month")
+        # 預設為上個月，方便人資操作
+        last_month = today - relativedelta(months=1)
+        year_conflict = c1.number_input("年份", min_value=2020, max_value=today.year + 1, value=last_month.year, key="conflict_year")
+        month_conflict = c2.number_input("月份", min_value=1, max_value=12, value=last_month.month, key="conflict_month")
 
-        if st.button("開始交叉比對", key="conflict_button"):
-            st.info("功能開發中... 此處將顯示資料庫中假單與打卡紀錄的重疊分析結果。")
+        if st.button("開始交叉比對", key="conflict_button", type="primary"):
+            with st.spinner(f"正在分析 {year_conflict} 年 {month_conflict} 月的資料..."):
+                try:
+                    conflict_df = logic_leave.analyze_attendance_leave_conflicts(conn, year_conflict, month_conflict)
+                    st.session_state['conflict_analysis_result'] = conflict_df
+                except Exception as e:
+                    st.error(f"分析時發生錯誤: {e}")
+                    st.code(traceback.format_exc())
+
+        if 'conflict_analysis_result' in st.session_state:
+            st.markdown("---")
+            st.markdown("#### 分析報告")
+            result_df = st.session_state['conflict_analysis_result']
+            st.dataframe(result_df, use_container_width=True)
