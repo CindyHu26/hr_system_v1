@@ -7,54 +7,92 @@
 import pandas as pd
 import requests
 import io
+import csv
 from datetime import datetime, time, date, timedelta
 import traceback
 import streamlit as st
-from bs4 import BeautifulSoup # 【關鍵修正 1】補上缺少的 import
+from bs4 import BeautifulSoup
 
 # --- 核心功能函式 ---
 
 @st.cache_data
 def fetch_taiwan_calendar(year: int):
     """
-    從政府資料開放平臺抓取指定年份的行事曆，並解析出假日與補班日。
-    使用快取確保同一年份只抓取一次。
+    【二次修正版】根據您提供的最新HTML結構，能夠更精準地尋找下載連結，
+    並排除掉非必要的檔案版本(如Google專用版)。
+    【三次修正版】移除所有 st.info/success/error 提示，只回傳結果與狀態訊息。
     """
-    st.info(f"正在從網路同步 {year} 年的台灣政府行政機關行事曆...")
     try:
+        roc_year = year - 1911
         dataset_url = "https://data.gov.tw/dataset/14718"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(dataset_url, headers=headers, timeout=15)
-        response.raise_for_status()
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+
+        page_res = requests.get(dataset_url, headers=headers, timeout=15)
+        page_res.raise_for_status()
         
-        soup = BeautifulSoup(response.text, "html.parser")
-        link_element = soup.select_one("a.btn.btn-outline-secondary[href$='.csv']")
-        
-        if not link_element:
-            st.error("在政府資料開放平臺上找不到 CSV 下載連結，網站結構可能已變更。")
-            return set(), set()
+        soup = BeautifulSoup(page_res.text, 'lxml')
+
+        candidates = []
+        for item in soup.select("li.resource-item"):
+            link_element = item.select_one("a")
+            if not link_element or not link_element.has_attr('href'):
+                continue
             
-        csv_url = link_element['href']
+            link_url = link_element['href']
+            link_text = item.get_text(strip=True)
+
+            if f"{roc_year}年" not in link_text: continue
+            if 'csv' not in link_url.lower(): continue
+            unwanted_keywords = ["Google", "iCal", "PDF", "ODS", "XML", "JSON"]
+            if any(keyword.lower() in link_text.lower() for keyword in unwanted_keywords): continue
+
+            candidates.append({"text": link_text, "url": link_url})
         
-        response = requests.get(csv_url, headers=headers)
+        if not candidates:
+            return set(), set(), f"錯誤：在資料集頁面上找不到民國 {roc_year} 年的通用 CSV 檔案。"
+        
+        best_choice = candidates[0]
+        for candidate in candidates:
+            if "修正版" in candidate["text"]:
+                best_choice = candidate
+                break
+        
+        target_link = best_choice["url"]
+        
+        response = requests.get(target_link, headers=headers, timeout=15)
         response.raise_for_status()
         
-        csv_content = response.content.decode('utf-8-sig')
-        df = pd.read_csv(io.StringIO(csv_content))
+        holidays = set()
+        workdays = set()
 
-        df['date'] = pd.to_datetime(df['date'], format='%Y%m%d').dt.date
+        csv_file = io.StringIO(response.text)
+        reader = csv.DictReader(csv_file)
         
-        holidays = set(df[df['isHoliday'] == '2']['date'])
-        workdays = set(df[df['isHoliday'] == '0']['date'])
-        
-        st.success(f"成功同步 {year} 年行事曆！")
-        return holidays, workdays
+        for row in reader:
+            try:
+                date_str = row.get("西元日期") or row.get("date")
+                is_holiday_str = row.get("是否放假") or row.get("isHoliday")
+                
+                if not date_str or not is_holiday_str: continue
 
+                d = datetime.strptime(date_str, "%Y%m%d").date()
+                
+                if is_holiday_str == '2': holidays.add(d)
+                elif is_holiday_str == '0': workdays.add(d)
+                
+            except (ValueError, KeyError, TypeError): continue
+        
+        status_message = f"成功同步 {year} 年行事曆！(共 {len(holidays)} 個假日與 {len(workdays)} 個上班日)"
+        return holidays, workdays, status_message
+        
+    except requests.RequestException as e:
+        return set(), set(), f"抓取 {year} 年行事曆時發生網路錯誤: {e}"
     except Exception as e:
-        st.error(f"抓取 {year} 年行事曆時發生錯誤: {e}")
-        return set(), set()
+        return set(), set(), f"處理 {year} 年行事曆資料時發生未知錯誤: {e}"
 
-def calculate_leave_hours(start_dt, end_dt):
+def calculate_leave_hours(start_dt, end_dt, calendar_status_messages):
     """
     接收 datetime 物件，精確計算請假時數。
     """
@@ -66,9 +104,11 @@ def calculate_leave_hours(start_dt, end_dt):
     years_to_fetch = set(range(start_dt.year, end_dt.year + 1))
     all_holidays, all_makeup_workdays = set(), set()
     for year_to_fetch in years_to_fetch:
-        h, w = fetch_taiwan_calendar(year_to_fetch)
+        h, w, status_msg = fetch_taiwan_calendar(year_to_fetch)
         all_holidays.update(h)
         all_makeup_workdays.update(w)
+        if status_msg not in calendar_status_messages:
+            calendar_status_messages.append(status_msg)
         
     total_hours = 0.0
     work_start, lunch_start = time(8, 0), time(12, 0)
@@ -84,6 +124,7 @@ def calculate_leave_hours(start_dt, end_dt):
             current_date += timedelta(days=1)
             continue
 
+        # 【關鍵修正】將所有 start_date 和 end_date 改為正確的參數名稱 start_dt 和 end_dt
         day_leave_start = start_dt.time() if current_date == start_dt.date() else time.min
         day_leave_end = end_dt.time() if current_date == end_dt.date() else time.max
         
@@ -106,13 +147,14 @@ def calculate_leave_hours(start_dt, end_dt):
         
     return round(total_hours, 2)
 
-# 【關鍵修正 2】將所有邏輯整合到這個函式中，採用舊專案的穩健流程
+
 def process_leave_file(source_input, year=None, month=None):
     """
     整合了讀取、篩選、計算的單一主函式。
     """
+    calendar_sync_messages = []
+    
     try:
-        # 步驟 1: 讀取並初步篩選出已通過的假單 (日期保持為字串)
         source_bytes = None
         if isinstance(source_input, str) and "docs.google.com/spreadsheets" in source_input:
             csv_export_url = source_input.replace('/edit?usp=sharing', '/export?format=csv')
@@ -130,21 +172,18 @@ def process_leave_file(source_input, year=None, month=None):
         if df.empty:
             raise ValueError("在整個資料來源中找不到任何「已通過」的假單。")
 
-        # 步驟 2: 逐筆處理：進行月份篩選並計算時數
         processed_records = []
         for _, row in df.iterrows():
             try:
-                # 在迴圈內逐筆轉換日期，保留時間
+                # 日期時間解析的邏輯維持不變，確保穩定性
                 start_date_obj = pd.to_datetime(row['Start Date'])
                 end_date_obj = pd.to_datetime(row['End Date'])
 
-                # 如果有指定月份，則進行篩選
                 if year is not None and month is not None:
                     if not (start_date_obj.year == year and start_date_obj.month == month):
-                        continue # 不符合月份，跳過此筆紀錄
+                        continue
 
-                # 只有符合條件的假單才會觸發時數計算（和行事曆抓取）
-                leave_hours = calculate_leave_hours(start_date_obj, end_date_obj)
+                leave_hours = calculate_leave_hours(start_date_obj, end_date_obj, calendar_sync_messages)
                 
                 new_row = row.to_dict()
                 new_row['Start Date'] = start_date_obj
@@ -162,6 +201,14 @@ def process_leave_file(source_input, year=None, month=None):
             except Exception as e:
                 st.warning(f"跳過一筆無法處理的假單。Request ID: {row.get('Request ID', 'N/A')}, 錯誤: {e}")
                 continue
+        
+        if calendar_sync_messages:
+            with st.expander("行事曆同步狀態", expanded=True):
+                for msg in calendar_sync_messages:
+                    if "成功" in msg:
+                        st.write(f"✔️ {msg}")
+                    else:
+                        st.warning(f"⚠️ {msg}")
 
         if not processed_records:
             if year and month:
@@ -169,8 +216,6 @@ def process_leave_file(source_input, year=None, month=None):
             else:
                 raise ValueError("找不到任何有效的「已通過」假單紀錄。")
 
-
-        # 步驟 3: 建立最終的 DataFrame
         result_df = pd.DataFrame(processed_records)
         
         cols_order = [
@@ -183,4 +228,11 @@ def process_leave_file(source_input, year=None, month=None):
         return result_df[existing_cols + other_cols]
 
     except Exception as e:
+        if calendar_sync_messages:
+            with st.expander("行事曆同步狀態", expanded=True):
+                for msg in calendar_sync_messages:
+                    if "成功" in msg:
+                        st.write(f"✔️ {msg}")
+                    else:
+                        st.warning(f"⚠️ {msg}")
         raise ValueError(f"處理請假檔案時發生錯誤: {e}")
