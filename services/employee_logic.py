@@ -7,12 +7,14 @@ NATIONALITY_MAP_REVERSE = {'台灣': 'TW', '泰國': 'TH', '印尼': 'ID', '越�
 
 def batch_import_employees(conn, uploaded_file):
     """
-    處理上傳的員工資料 Excel，進行驗證並呼叫資料庫函式進行儲存。
+    處理上傳的員工資料 Excel，進行驗證並呼叫資料庫函式进行儲存 (V2)。
+    - 強化日期處理與錯誤回報。
     """
     try:
-        df = pd.read_excel(uploaded_file)
+        # 【修改】讀取時，將所有欄位先當作字串，避免日期自動轉換
+        df = pd.read_excel(uploaded_file, dtype=str).fillna('')
         
-        # 為了比對，將欄位名稱與 template 中的 key 對應起來
+        # ... (column_rename_map 保持不變) ...
         column_rename_map = {
             '姓名*': 'name_ch', '身分證號*': 'id_no', '員工編號*': 'hr_code',
             '到職日(YYYY-MM-DD)': 'entry_date', '性別(男/女)': 'gender',
@@ -23,43 +25,44 @@ def batch_import_employees(conn, uploaded_file):
         }
         df.rename(columns=column_rename_map, inplace=True)
 
-        # 資料清洗與驗證
         records_to_process = []
         errors = []
         for index, row in df.iterrows():
-            # 檢查必填欄位
-            if pd.isna(row.get('name_ch')) or pd.isna(row.get('id_no')) or pd.isna(row.get('hr_code')):
+            # 檢查必填欄位 (姓名、身分證、員工編號)
+            if not row.get('name_ch') or not row.get('id_no') or not row.get('hr_code'):
                 errors.append({'row': index + 2, 'reason': '姓名、身分證號或員工編號為空，已跳過此行。'})
                 continue
             
             # 轉換國籍
-            if pd.notna(row.get('nationality')):
+            if row.get('nationality'):
                 row['nationality'] = NATIONALITY_MAP_REVERSE.get(row['nationality'], 'TW')
             
-            # 處理日期格式
+            # 【強化】處理日期格式
             for date_col in ['entry_date', 'birth_date', 'arrival_date', 'resign_date']:
-                if pd.notna(row.get(date_col)):
+                date_val = row.get(date_col)
+                if date_val: # 只有在儲存格不為空時才處理
                     try:
-                        # pd.to_datetime 可以彈性解析多種日期格式
-                        row[date_col] = pd.to_datetime(row[date_col]).strftime('%Y-%m-%d')
-                    except ValueError:
-                        errors.append({'row': index + 2, 'reason': f"日期欄位 {date_col} 格式錯誤，已將其設為空值。"})
+                        # pd.to_datetime 可以彈性解析多種格式，包含 Excel 的數字格式
+                        # errors='coerce' 會在轉換失敗時回傳 NaT (Not a Time)
+                        parsed_date = pd.to_datetime(date_val, errors='coerce')
+                        if pd.isna(parsed_date):
+                            # 如果轉換失敗，拋出一個我們自訂的錯誤
+                            raise ValueError
+                        row[date_col] = parsed_date.strftime('%Y-%m-%d')
+                    except (ValueError, TypeError):
+                        # 捕獲錯誤，並提供更詳細的提示
+                        errors.append({'row': index + 2, 'reason': f"日期欄位 [{date_col}] 的內容 '{date_val}' 格式無法辨識，已設為空值。"})
                         row[date_col] = None
             
-            # 將處理好的 row 加入待處理列表
             records_to_process.append(row.to_dict())
             
-        # 如果沒有可處理的資料，就直接返回
         if not records_to_process:
             return {'inserted': 0, 'updated': 0, 'failed': len(df), 'errors': errors}
 
-        # 將 list of dicts 轉回 DataFrame，準備傳入資料庫
         clean_df = pd.DataFrame(records_to_process)
         
-        # 呼叫資料庫函式執行批次操作
         db_report = q_emp.batch_add_or_update_employees(conn, clean_df)
         
-        # 組合最終報告
         final_report = {
             'inserted': db_report.get('inserted', 0),
             'updated': db_report.get('updated', 0),
@@ -69,5 +72,4 @@ def batch_import_employees(conn, uploaded_file):
         return final_report
 
     except Exception as e:
-        # 如果是讀取或解析 Excel 階段就出錯
         raise Exception(f"處理 Excel 檔案時發生錯誤：{e}")

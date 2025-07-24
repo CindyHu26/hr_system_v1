@@ -44,18 +44,41 @@ def employee_selector(conn, key_prefix="", pre_selected_ids=None):
         st.error(f"載入員工選擇器時發生錯誤: {e}")
         return []
 
-# --- 【全新通用元件】 ---
+# --- 【升級版通用元件】 ---
 def create_batch_import_section(info_text: str, template_columns: dict, template_file_name: str, import_logic_func, conn):
     """
-    產生一個標準的批次匯入 UI 區塊。
-
-    Args:
-        info_text (str): 顯示在區塊頂部的說明文字。
-        template_columns (dict): 用於產生 Excel 範本的欄位名稱字典。
-        template_file_name (str): 下載的範本檔案名稱。
-        import_logic_func (function): 當使用者點擊匯入時，要呼叫的後端邏輯函式。它應接收 (conn, uploaded_file) 作為參數。
-        conn: 資料庫連線物件。
+    產生一個標準的批次匯入 UI 區塊 (V2)。
+    - 使用 session_state 來保留匯入報告，避免訊息消失。
+    - 提供手動清除報告的按鈕。
     """
+    # 為每個元件產生一個獨特的 session state key
+    session_key = f"import_report_{template_file_name}"
+
+    # 如果 session 中有報告，就顯示它
+    if session_key in st.session_state:
+        report = st.session_state[session_key]
+        st.subheader("匯入結果報告")
+        st.markdown(f"""
+        - **成功新增**: {report.get('inserted', 0)} 筆紀錄
+        - **成功更新**: {report.get('updated', 0)} 筆紀錄
+        - **失敗或跳過**: {report.get('failed', 0)} 筆紀錄
+        """)
+
+        if report.get('errors'):
+            st.error("部分資料處理失敗，原因如下：")
+            # 顯示前 10 條錯誤，避免洗版
+            for error in report['errors'][:10]:
+                st.write(f"- 第 {error['row']} 行: {error['reason']}")
+            if len(report['errors']) > 10:
+                st.warning(f"...還有 {len(report['errors']) - 10} 筆錯誤未顯示。")
+        
+        # 提供清除按鈕
+        if st.button("清除報告並重試", key=f"clear_btn_{template_file_name}"):
+            del st.session_state[session_key]
+            st.rerun()
+        return # 顯示報告後，下方的上傳元件就先不顯示
+
+    # --- 以下是尚未有報告時的正常顯示 ---
     st.info(info_text)
 
     # 1. 產生並提供範本下載
@@ -81,21 +104,10 @@ def create_batch_import_section(info_text: str, template_columns: dict, template
         if st.button("開始匯入", type="primary", key=f"import_btn_{template_file_name}"):
             with st.spinner("正在處理上傳的檔案..."):
                 try:
+                    # 執行匯入邏輯，並將結果存入 session
                     report = import_logic_func(conn, uploaded_file)
-                    st.success("檔案處理完成！")
-
-                    st.markdown(f"""
-                    - **成功新增**: {report.get('inserted', 0)} 筆紀錄
-                    - **成功更新**: {report.get('updated', 0)} 筆紀錄
-                    - **失敗或跳過**: {report.get('failed', 0)} 筆紀錄
-                    """)
-
-                    if report.get('errors'):
-                        st.error("部分資料處理失敗，原因如下：")
-                        for error in report['errors']:
-                            st.write(f"- 第 {error['row']} 行: {error['reason']}")
-                    
-                    st.rerun()
+                    st.session_state[session_key] = report
+                    st.rerun() # 立即重跑以顯示報告
 
                 except Exception as e:
                     st.error(f"匯入過程中發生嚴重錯誤：{e}")
