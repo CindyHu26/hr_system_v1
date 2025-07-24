@@ -2,15 +2,21 @@
 import streamlit as st
 import pandas as pd
 from db import queries_common as q_common
+from utils.ui_components import create_batch_import_section
+from services import company_logic as logic_comp
+
+COLUMN_MAP = {
+    'name': '公司名稱', 'uniform_no': '統一編號', 'address': '地址',
+    'owner': '負責人', 'ins_code': '投保代號', 'note': '備註'
+}
+COMPANY_TEMPLATE_COLUMNS = {
+    'name': '公司名稱*', 'uniform_no': '統一編號*', 'address': '地址',
+    'owner': '負責人', 'ins_code': '投保代號', 'note': '備註'
+}
 
 def show_page(conn):
     st.header("🏢 公司管理")
     st.info("管理系統中所有作為加保單位的公司資料。")
-
-    COLUMN_MAP = {
-        'name': '公司名稱', 'uniform_no': '統一編號', 'address': '地址',
-        'owner': '負責人', 'ins_code': '投保代號', 'note': '備註'
-    }
 
     try:
         df_raw = q_common.get_all(conn, 'company', order_by='name')
@@ -20,9 +26,9 @@ def show_page(conn):
         return
 
     st.subheader("資料操作")
-    mode = st.radio("選擇操作", ["新增公司", "修改/刪除公司"], horizontal=True, key="company_crud_mode")
+    tab1, tab2, tab3 = st.tabs(["新增公司", "修改/刪除公司", "🚀 批次匯入 (Excel)"])
 
-    if mode == "新增公司":
+    with tab1:
         with st.form("add_company_form", clear_on_submit=True):
             st.write("請填寫新公司資料 (*為必填)")
             c1, c2 = st.columns(2)
@@ -43,7 +49,7 @@ def show_page(conn):
                     except Exception as e:
                         st.error(f"新增公司時發生錯誤：{e}")
     
-    elif mode == "修改/刪除公司":
+    with tab2:
         if not df_raw.empty:
             options = {f"{row['name']} ({row['uniform_no']})": row['id'] for _, row in df_raw.iterrows()}
             selected_key = st.selectbox("選擇要操作的公司", options.keys(), index=None, placeholder="請選擇一間公司...")
@@ -84,3 +90,12 @@ def show_page(conn):
                             st.rerun()
                         except Exception as e:
                             st.error(f"刪除失敗：{e} (該公司可能仍有關聯的員工加保紀錄)")
+    with tab3:
+        # 【新增】直接呼叫通用元件
+        create_batch_import_section(
+            info_text="說明：請下載範本，填寫公司資料後上傳。系統會以「統一編號」為唯一鍵進行新增或更新。",
+            template_columns=COMPANY_TEMPLATE_COLUMNS,
+            template_file_name="company_template.xlsx",
+            import_logic_func=logic_comp.batch_import_companies,
+            conn=conn
+        )
