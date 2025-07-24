@@ -10,6 +10,12 @@ from db import queries_insurance as q_ins
 from db import queries_common as q_common
 from services import insurance_logic as logic_ins
 
+COLUMN_MAP = {
+    'grade': '級', 'salary_min': '薪資下限', 'salary_max': '薪資上限',
+    'employee_fee': '員工負擔', 'employer_fee': '雇主負擔', 'gov_fee': '政府補助',
+    'note': '備註'
+}
+
 def show_page(conn):
     st.header("🏦 勞健保級距管理")
     st.info("您可以在此維護不同版本的勞、健保投保級距與費用。")
@@ -25,13 +31,15 @@ def show_page(conn):
                 format_func=lambda dt: dt.strftime('%Y-%m-%d')
             )
             display_df = grades_df[pd.to_datetime(grades_df['start_date']) == selected_version_date]
+            labor_df = display_df[display_df['type'] == 'labor'].drop(columns=['type', 'start_date', 'id']).rename(columns=COLUMN_MAP)
+            health_df = display_df[display_df['type'] == 'health'].drop(columns=['type', 'start_date', 'id']).rename(columns=COLUMN_MAP)
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("#### 勞工保險級距")
-                st.dataframe(display_df[display_df['type'] == 'labor'].drop(columns=['type', 'start_date', 'id']), use_container_width=True)
+                st.dataframe(labor_df, use_container_width=True)
             with col2:
                 st.markdown("#### 全民健康保險級距")
-                st.dataframe(display_df[display_df['type'] == 'health'].drop(columns=['type', 'start_date', 'id']), use_container_width=True)
+                st.dataframe(health_df, use_container_width=True)
         else:
             st.warning("資料庫中尚無任何級距資料，請先從下方進行更新。")
     except Exception as e:

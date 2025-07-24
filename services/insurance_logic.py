@@ -9,7 +9,9 @@ import io
 def parse_labor_insurance_excel(file_obj):
     """根據官方 Excel 檔案的特定格式，解析勞保級距表。"""
     try:
-        df = pd.read_excel(file_obj, header=None, engine='openpyxl')
+        # 【關鍵修正】將讀取引擎從 'openpyxl' 改為 'xlrd'，以兼容舊版 .xls 檔案格式
+        df = pd.read_excel(file_obj, header=None, engine='xlrd')
+        
         # 根據經驗，關鍵資料通常在這些行（可能會隨檔案版本變動）
         grade_row_data = df.iloc[36]
         salary_row_data = df.iloc[37]

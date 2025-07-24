@@ -1,7 +1,7 @@
 # app.py
 import streamlit as st
 from db.db_manager import init_connection
-from pages import (
+from views import (
     employee_management,
     company_management,
     insurance_history,

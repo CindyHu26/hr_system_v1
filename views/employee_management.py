@@ -10,6 +10,13 @@ from utils.helpers import to_date
 NATIONALITY_MAP = {'台灣': 'TW', '泰國': 'TH', '印尼': 'ID', '越南': 'VN', '菲律賓': 'PH'}
 NATIONALITY_MAP_REVERSE = {v: k for k, v in NATIONALITY_MAP.items()}
 
+COLUMN_MAP = {
+    'id': '系統ID', 'name_ch': '姓名', 'id_no': '身份證號', 'entry_date': '到職日',
+    'hr_code': '員工編號', 'gender': '性別', 'birth_date': '生日', 'nationality': '國籍',
+    'arrival_date': '首次抵台日', 'phone': '電話', 'address': '地址', 'dept': '部門',
+    'title': '職稱', 'resign_date': '離職日', 'bank_account': '銀行帳號', 'note': '備註'
+}
+
 def show_page(conn):
     st.header("👤 員工管理")
 
@@ -19,12 +26,7 @@ def show_page(conn):
         if 'nationality' in df_display.columns:
             df_display['nationality'] = df_display['nationality'].map(NATIONALITY_MAP_REVERSE).fillna(df_display['nationality'])
         
-        column_config = {
-            "id": st.column_config.NumberColumn("ID", width="small"),
-            "name_ch": "姓名", "hr_code": "員工編號", "id_no": "身份證號",
-            "dept": "部門", "title": "職稱", "entry_date": "到職日", "resign_date": "離職日",
-        }
-        st.dataframe(df_display, column_config=column_config, use_container_width=True)
+        st.dataframe(df_display.rename(columns=COLUMN_MAP), use_container_width=True)
     except Exception as e:
         st.error(f"讀取員工資料時發生錯誤: {e}")
         return
