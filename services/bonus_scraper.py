@@ -7,6 +7,7 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 from utils.helpers import get_monthly_dates
+import config  # [新增] 匯入 config 模組
 
 WAIT_TIMEOUT = 20
 
@@ -18,13 +19,20 @@ def get_salespersons_list(username, password):
         options.add_argument("--headless")
         driver = webdriver.Chrome(options=options)
         wait = WebDriverWait(driver, 5)
-        url = f"http://{username}:{password}@192.168.1.168/labor/labor_123_p02.php"
+
+        # [修改] 從 config 讀取 URL，並動態組合
+        if not config.BONUS_SYSTEM_URL:
+            raise ValueError("錯誤：請在 .env 檔案中設定 BONUS_SYSTEM_URL")
+        base_url = config.BONUS_SYSTEM_URL.replace("http://", "").replace("https://", "")
+        url = f"http://{username}:{password}@{base_url}"
+        
         driver.get(url)
         sales_dropdown = wait.until(EC.visibility_of_element_located((By.XPATH, "/html/body/form/table/tbody/tr[12]/td/select")))
         salespersons = [opt.text.strip() for opt in Select(sales_dropdown).options if opt.get_attribute("value")]
         return salespersons
-    except Exception:
-        return []
+    except Exception as e:
+        # 拋出更詳細的錯誤
+        raise ConnectionError(f"無法連接到獎金系統或獲取業務員列表，請檢查 .env 設定與系統狀態。錯誤: {e}")
     finally:
         if driver:
             driver.quit()
@@ -43,7 +51,13 @@ def fetch_all_bonus_data(username, password, year, month, salespersons, progress
         try:
             driver = webdriver.Chrome()
             wait = WebDriverWait(driver, WAIT_TIMEOUT)
-            url = f"http://{username}:{password}@192.168.1.168/labor/labor_123_p02.php"
+            
+            # [修改] 從 config 讀取 URL，並動態組合
+            if not config.BONUS_SYSTEM_URL:
+                raise ValueError("錯誤：請在 .env 檔案中設定 BONUS_SYSTEM_URL")
+            base_url = config.BONUS_SYSTEM_URL.replace("http://", "").replace("https://", "")
+            url = f"http://{username}:{password}@{base_url}"
+
             driver.get(url)
             
             wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/table/tbody/tr[6]/td/input[1]"))).send_keys(search_start_date)
