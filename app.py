@@ -17,7 +17,8 @@ from views import (
     salary_calculation,
     annual_summary,             
     nhi_summary,                
-    annual_leave                
+    annual_leave,
+    attendance_report          
 )
 
 # --- 頁面設定 ---
@@ -52,7 +53,8 @@ PAGES_SALARY = {
 }
 PAGES_REPORTING = {
     "📊 年度薪資總表": annual_summary,
-    "健保補充保費試算": nhi_summary,
+    "📈 健保補充保費試算": nhi_summary,
+    "📅 出勤月報表匯出": attendance_report,
 }
 
 ALL_PAGES = {**PAGES_ADMIN, **PAGES_ATTENDANCE, **PAGES_SALARY, **PAGES_REPORTING}

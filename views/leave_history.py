@@ -28,13 +28,6 @@ def show_page(conn):
         index=last_month.month - 1 # 月份是1-12，索引是0-11
     )
     month = month_options[selected_month_name]
-    
-    selected_month_name = c2.selectbox(
-        "選擇月份 (可選 '全年' 進行年度統計)", 
-        options=list(month_options.keys()), 
-        index=len(month_options) - 1
-    )
-    month = month_options[selected_month_name]
 
     # --- 查詢與顯示 ---
     try:

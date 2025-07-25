@@ -9,9 +9,10 @@ from utils.helpers import get_monthly_dates
 def get_attendance_by_month(conn, year, month):
     """根據年月查詢出勤紀錄，並一併顯示員工姓名與編號。"""
     month_str = f"{year}-{month:02d}"
+    # [核心修改] 在 SELECT 語句中加入了 e.id as employee_id
     query = """
     SELECT
-        a.id, e.hr_code, e.name_ch, a.date, a.checkin_time, a.checkout_time,
+        a.id, e.id as employee_id, e.hr_code, e.name_ch, a.date, a.checkin_time, a.checkout_time,
         a.late_minutes, a.early_leave_minutes, a.absent_minutes, a.leave_minutes, 
         a.overtime1_minutes, a.overtime2_minutes, a.overtime3_minutes, a.note
     FROM attendance a
@@ -244,3 +245,25 @@ def get_leave_hours_for_period(conn, employee_id, leave_type, start_date, end_da
     cursor = conn.cursor()
     result = cursor.execute(sql, (employee_id, leave_type, start_date, end_date)).fetchone()
     return result[0] if result and result[0] is not None else 0
+
+def get_leave_details_by_month(conn, year: int, month: int):
+    """
+    獲取指定月份所有員工的每日請假紀錄，包含時間，用於報表生成。
+    (V2: 不再群組，而是回傳詳細紀錄)
+    """
+    month_str = f"{year}-{month:02d}"
+    query = """
+    SELECT
+        employee_id,
+        leave_type,
+        start_date,
+        end_date,
+        duration
+    FROM leave_record
+    WHERE (strftime('%Y-%m', start_date) = ? OR strftime('%Y-%m', end_date) = ?)
+      AND status = '已通過'
+    ORDER BY employee_id, start_date;
+    """
+    # 將 start_date 和 end_date 直接解析為日期時間格式
+    df = pd.read_sql_query(query, conn, params=(month_str, month_str), parse_dates=['start_date', 'end_date'])
+    return df
