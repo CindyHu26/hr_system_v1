@@ -16,43 +16,50 @@ def calculate_leave_entitlement(years_of_service):
     if years_of_service < 3: return 10
     if years_of_service < 5: return 14
     if years_of_service < 10: return 15
-    return min(15 + int(years_of_service) - 9, 30)
+    # 滿10年後，每多一年加一天，上限30天
+    return min(15 + (int(years_of_service) - 9), 30)
 
 def get_annual_leave_summary(conn):
-    """計算所有在職員工的年度特休天數、已休與剩餘天數"""
+    """
+    計算所有在職員工的年度特休天數、已休與剩餘天數。
+    V3: 修正對「在職」的判斷邏輯，使其能處理空字串。
+    """
     employees = q_emp.get_all_employees(conn)
-    on_duty_employees = employees[pd.isnull(employees['resign_date'])].copy()
+    
+    # [核心修改] 判斷 resign_date 為空值(NULL)或空字串('') 的都算是在職員工
+    on_duty_employees = employees[(pd.isnull(employees['resign_date'])) | (employees['resign_date'] == '')].copy()
 
     if on_duty_employees.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), [] # 返回空的 DataFrame 和空的跳過列表
 
     today = date.today()
     summaries = []
+    skipped_employees = [] # 用於記錄被跳過的員工
 
     for _, emp in on_duty_employees.iterrows():
+        if pd.isna(emp['entry_date']) or emp['entry_date'] == '':
+            skipped_employees.append(emp['name_ch'])
+            continue
+            
         entry_date = pd.to_datetime(emp['entry_date']).date()
-        if pd.isna(entry_date): continue
 
-        # 計算完整年資
+        # --- 週年計算邏輯 ---
         total_service = relativedelta(today, entry_date)
-        years_of_service = total_service.years + total_service.months / 12 + total_service.days / 365.25
-
-        # 計算週年制年度區間
-        anniversary_year_start = date(today.year, entry_date.month, entry_date.day)
-        if anniversary_year_start > today:
+        
+        if today.month < entry_date.month or (today.month == entry_date.month and today.day < entry_date.day):
             anniversary_year_start = date(today.year - 1, entry_date.month, entry_date.day)
-        anniversary_year_end = date(anniversary_year_start.year + 1, anniversary_year_start.month, anniversary_year_start.day) - relativedelta(days=1)
+        else:
+            anniversary_year_start = date(today.year, entry_date.month, entry_date.day)
+        
+        anniversary_year_end = anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
 
-        # 查詢此週年區間內的特休時數
-        sql = "SELECT SUM(duration) FROM leave_record WHERE employee_id = ? AND leave_type = '特休' AND status = '已通過' AND start_date BETWEEN ? AND ?"
-        used_hours_tuple = conn.execute(sql, (emp['id'], anniversary_year_start, anniversary_year_end)).fetchone()
-        used_hours = used_hours_tuple[0] if used_hours_tuple and used_hours_tuple[0] else 0
-        used_days = round(used_hours / 8, 2)
-
-        # 計算應有特休
         service_at_anniversary_start = relativedelta(anniversary_year_start, entry_date)
-        service_years_at_start = service_at_anniversary_start.years + service_at_anniversary_start.months / 12
+        service_years_at_start = service_at_anniversary_start.years + service_at_anniversary_start.months / 12 + service_at_anniversary_start.days / 365.25
+
         total_days = calculate_leave_entitlement(service_years_at_start)
+        
+        used_hours = q_att.get_leave_hours_for_period(conn, emp['id'], '特休', anniversary_year_start, anniversary_year_end)
+        used_days = round(used_hours / 8, 2)
         
         remaining_days = total_days - used_days
 
@@ -66,7 +73,7 @@ def get_annual_leave_summary(conn):
             '本期已休特休天數': used_days,
             '本期剩餘特休天數': remaining_days
         })
-    return pd.DataFrame(summaries)
+    return pd.DataFrame(summaries), skipped_employees
 
 
 def show_page(conn):
@@ -75,15 +82,28 @@ def show_page(conn):
 
     if st.button("重新計算所有員工特休", type="primary"):
         with st.spinner("正在計算中..."):
-            summary_df = get_annual_leave_summary(conn)
+            summary_df, skipped_employees = get_annual_leave_summary(conn)
             st.session_state['annual_leave_summary'] = summary_df
+            st.session_state['skipped_employees_annual_leave'] = skipped_employees
     
     if 'annual_leave_summary' in st.session_state:
-        st.dataframe(st.session_state['annual_leave_summary'], use_container_width=True)
+        summary_df = st.session_state['annual_leave_summary']
+        skipped_employees = st.session_state['skipped_employees_annual_leave']
         
-        fname = f"annual_leave_summary_{pd.Timestamp.now().strftime('%Y%m%d')}.csv"
-        st.download_button(
-            "下載總結報告",
-            st.session_state['annual_leave_summary'].to_csv(index=False).encode("utf-8-sig"),
-            file_name=fname
-        )
+        if skipped_employees:
+            st.warning(f"""
+            **注意：** 以下 {len(skipped_employees)} 位在職員工因缺少「到職日」資料而未被計算，請至「員工管理」頁面補全：
+            - {', '.join(skipped_employees)}
+            """)
+        
+        if not summary_df.empty:
+            st.dataframe(summary_df, use_container_width=True)
+            
+            fname = f"annual_leave_summary_{pd.Timestamp.now().strftime('%Y%m%d')}.csv"
+            st.download_button(
+                "下載總結報告",
+                summary_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name=fname
+            )
+        elif not skipped_employees:
+            st.info("資料庫中目前沒有在職員工可供計算。")

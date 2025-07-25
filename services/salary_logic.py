@@ -1,23 +1,25 @@
 # services/salary_logic.py
 import pandas as pd
 import config
-from datetime import datetime # 【新增】導入 datetime
-# 修正 import 路徑，導入所有需要的模組
+from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
+
 from db import queries_employee as q_emp
 from db import queries_attendance as q_att
-# 【修改】導入 queries_salary_base 以取代舊的 q_items
+
 from db import queries_salary_base as q_base
 from db import queries_salary_records as q_records
 from db import queries_insurance as q_ins
 from db import queries_bonus as q_bonus
-from db import queries_allowances as q_allow # 【新增】導入津貼查詢
+from db import queries_allowances as q_allow # 導入津貼查詢
 from services import overtime_logic
+from views.annual_leave import calculate_leave_entitlement # 引用特休計算規則
 
 def calculate_salary_df(conn, year, month):
     """
     薪資試算引擎：根據各項資料計算全新的薪資草稿。
+    V2: 新增特休未休工資結算邏輯
     """
-    # 【新增】定義稅務計算所需的常數
     MINIMUM_WAGE_2025 = 28590
     TAX_THRESHOLD = MINIMUM_WAGE_2025 * 1.5
 
@@ -26,7 +28,6 @@ def calculate_salary_df(conn, year, month):
         return pd.DataFrame(), {}
     
     monthly_attendance = q_att.get_monthly_attendance_summary(conn, year, month)
-    # 【修改】從正確的模組取得項目類型
     item_types = pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
     all_salary_data = []
 
@@ -34,7 +35,6 @@ def calculate_salary_df(conn, year, month):
         emp_id, emp_name = emp['id'], emp['name_ch']
         details = {'員工姓名': emp_name, '員工編號': emp['hr_code']}
         
-        # 【修改】改用 q_base 模組中的函式
         base_info = q_base.get_employee_base_salary_info(conn, emp_id, year, month)
         base_salary = base_info['base_salary'] if base_info else 0
         insurance_salary = base_info['insurance_salary'] if base_info and base_info['insurance_salary'] else base_salary
@@ -43,6 +43,34 @@ def calculate_salary_df(conn, year, month):
         hourly_rate = base_salary / config.HOURLY_RATE_DIVISOR if config.HOURLY_RATE_DIVISOR > 0 else 0
         details['底薪'] = base_salary
         
+        # --- [功能新增] 特休未休工資結算 ---
+        entry_date_str = emp['entry_date']
+        if pd.notna(entry_date_str):
+            entry_date = pd.to_datetime(entry_date_str).date()
+            # 只有在 "到職月份" 才觸發結算
+            if entry_date.month == month:
+                # 結算 "前一個" 週年年度
+                last_anniversary_year_start = date(year - 1, entry_date.month, entry_date.day)
+                last_anniversary_year_end = last_anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
+
+                # 計算在該年度開始時的年資，以決定應有天數
+                service_at_start = relativedelta(last_anniversary_year_start, entry_date)
+                service_years = service_at_start.years + service_at_start.months / 12 + service_at_start.days / 365.25
+                
+                total_entitled_days = calculate_leave_entitlement(service_years)
+                
+                # 查詢該年度已休時數
+                used_hours = q_att.get_leave_hours_for_period(conn, emp_id, '特休', last_anniversary_year_start, last_anniversary_year_end)
+                used_days = round(used_hours / 8, 2)
+                
+                unused_days = total_entitled_days - used_days
+                
+                if unused_days > 0:
+                    daily_wage = round(base_salary / 30)
+                    payout_amount = int(round(unused_days * daily_wage))
+                    details['特休未休工資'] = payout_amount
+        # --- 特休結算結束 ---
+
         if emp_id in monthly_attendance.index:
             emp_att = monthly_attendance.loc[emp_id]
             if emp_att.get('late_minutes', 0) > 0:
@@ -59,7 +87,6 @@ def calculate_salary_df(conn, year, month):
                 if leave_type == '事假': details['事假'] = -int(round(hours * hourly_rate))
                 elif leave_type == '病假': details['病假'] = -int(round(hours * hourly_rate * 0.5))
 
-        # 【修改】改用 q_allow 模組中的函式
         for item in q_allow.get_employee_recurring_items(conn, emp_id):
             details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
 
@@ -68,30 +95,21 @@ def calculate_salary_df(conn, year, month):
             total_health_fee = health_fee * (1 + min(dependents, 3))
             details['勞健保'] = -int(labor_fee + total_health_fee)
             
-        # --- 【全新功能】非居住者預扣稅款計算 ---
         if emp['nationality'] and emp['nationality'] != 'TW':
             entry_date = datetime.strptime(emp['entry_date'], '%Y-%m-%d').date()
             should_withhold = False
             
-            # 規則1: 到職當年，從到職月起算6個月
             if entry_date.year == year:
                 if month >= entry_date.month and month < entry_date.month + 6:
                     should_withhold = True
-            # 規則2: 到職隔年起，每年1-6月預扣
             elif entry_date.year < year:
                 if month >= 1 and month <= 6:
                     should_withhold = True
             
             if should_withhold and insurance_salary > 0:
-                tax_rate = 0.0
-                if insurance_salary <= TAX_THRESHOLD:
-                    tax_rate = 0.06
-                else:
-                    tax_rate = 0.18
-                
+                tax_rate = 0.06 if insurance_salary <= TAX_THRESHOLD else 0.18
                 tax_amount = insurance_salary * tax_rate
                 details['預扣稅款'] = -int(round(tax_amount))
-        # --- 預扣稅款計算結束 ---
 
         special_ot_pay = overtime_logic.calculate_special_overtime_pay(conn, emp_id, year, month, hourly_rate)
         if special_ot_pay > 0:
@@ -105,7 +123,7 @@ def calculate_salary_df(conn, year, month):
 
     return pd.DataFrame(all_salary_data).fillna(0), item_types
 
-# --- NEW: 薪資單批次修改 ---
+# --- 薪資單批次修改 ---
 def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
     """
     處理從 Excel 上傳的薪資單批次修改。

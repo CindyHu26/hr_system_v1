@@ -49,12 +49,11 @@ def batch_insert_or_update_attendance(conn, df: pd.DataFrame):
             source_file=excluded.source_file;
     """
 
-    # 【修改】資料元組中加入 leave_minutes
     data_tuples = [
         (
             row['employee_id'], row['date'], row.get('checkin_time'), row.get('checkout_time'),
             row.get('late_minutes', 0), row.get('early_leave_minutes', 0), row.get('absent_minutes', 0),
-            row.get('leave_minutes', 0), # 新增欄位
+            row.get('leave_minutes', 0),
             row.get('overtime1_minutes', 0), row.get('overtime2_minutes', 0), row.get('overtime3_minutes', 0),
             'excel_import'
         ) for _, row in df_to_insert.iterrows()
@@ -97,8 +96,7 @@ def get_employee_leave_summary(conn, emp_id, year, month):
 def get_monthly_attendance_summary(conn, year, month):
     """獲取指定月份的考勤總結，用於薪資計算。"""
     _, month_end = get_monthly_dates(year, month)
-    month_str = month_end[:7] # YYYY-MM
-    # 查詢中加入 SUM(leave_minutes)
+    month_str = month_end[:7]
     query = """
     SELECT employee_id, 
            SUM(overtime1_minutes) as overtime1_minutes, SUM(overtime2_minutes) as overtime2_minutes, 
@@ -111,7 +109,6 @@ def get_monthly_attendance_summary(conn, year, month):
 def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
     """
     批次插入或更新請假紀錄。
-    以「假單申請ID (request_id)」為唯一鍵，如果已存在則更新，否則新增。
     """
     cursor = conn.cursor()
     try:
@@ -126,7 +123,6 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
         df_to_import.dropna(subset=['employee_id'], inplace=True)
         df_to_import['employee_id'] = df_to_import['employee_id'].astype(int)
 
-        # 【修改】將 reason 和 approver 欄位加回到 INSERT 和 UPDATE 語句中
         sql = """
         INSERT INTO leave_record (
             employee_id, request_id, leave_type, start_date, end_date,
@@ -150,7 +146,6 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
             parsed_submit_date = pd.to_datetime(submit_date_val, errors='coerce')
             submit_date_str = parsed_submit_date.strftime('%Y-%m-%d') if pd.notna(parsed_submit_date) else None
             
-            # 【修改】從 row 中讀取 'Reason' 和 'Approver' 欄位
             data_tuples.append((
                 row['employee_id'],
                 row['Request ID'],
@@ -158,9 +153,9 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
                 pd.to_datetime(row['Start Date']).strftime('%Y-%m-%d %H:%M:%S'),
                 pd.to_datetime(row['End Date']).strftime('%Y-%m-%d %H:%M:%S'),
                 row['核算時數'],
-                row.get('Reason'),  # 事由
+                row.get('Reason'),
                 row.get('Status'),
-                row.get('Approver'),  # 簽核人
+                row.get('Approver'),
                 submit_date_str,
                 row.get('備註')
             ))
@@ -173,46 +168,34 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
         conn.rollback()
         raise e
     
-# 用於交叉分析的查詢函式
 def get_monthly_attendance_and_leave_data(conn, year: int, month: int):
     """
-    獲取指定月份所有員工的出勤紀錄（包含簽到/退）和請假紀錄。
+    獲取指定月份所有員工的出勤紀錄和請假紀錄。
     """
     month_str = f"{year}-{month:02d}"
     
-    # 查詢所有出勤紀錄，而不僅僅是缺席
     attendance_query = """
     SELECT 
-        e.id as employee_id,
-        e.name_ch,
-        a.date,
-        a.checkin_time,
-        a.checkout_time,
-        a.absent_minutes
+        e.id as employee_id, e.name_ch, a.date,
+        a.checkin_time, a.checkout_time, a.absent_minutes
     FROM attendance a
     JOIN employee e ON a.employee_id = e.id
     WHERE STRFTIME('%Y-%m', a.date) = ?
     """
     attendance_df = pd.read_sql_query(attendance_query, conn, params=(month_str,))
     
-    # 查詢所有「已通過」的假單紀錄
     leave_query = """
     SELECT
-        e.id as employee_id,
-        lr.leave_type,
-        lr.start_date,
-        lr.end_date,
-        lr.duration
+        e.id as employee_id, lr.leave_type, lr.start_date,
+        lr.end_date, lr.duration
     FROM leave_record lr
     JOIN employee e ON lr.employee_id = e.id
-    WHERE 
-        (STRFTIME('%Y-%m', lr.start_date) = ? OR STRFTIME('%Y-%m', lr.end_date) = ?)
-        AND lr.status = '已通過'
+    WHERE (STRFTIME('%Y-%m', lr.start_date) = ? OR STRFTIME('%Y-%m', lr.end_date) = ?)
+    AND lr.status = '已通過'
     """
     leave_df = pd.read_sql_query(leave_query, conn, params=(month_str, month_str))
 
     return attendance_df, leave_df
-
 
 def get_leave_records_by_month(conn, year: int, month: int):
     """
@@ -221,15 +204,9 @@ def get_leave_records_by_month(conn, year: int, month: int):
     month_str = f"{year}-{month:02d}"
     query = """
     SELECT
-        e.name_ch as '員工姓名',
-        lr.leave_type as '假別',
-        lr.start_date as '開始時間',
-        lr.end_date as '結束時間',
-        lr.duration as '時數',
-        lr.reason as '事由',
-        lr.status as '狀態',
-        lr.approver as '簽核人',
-        lr.request_id as '假單ID'
+        e.name_ch as '員工姓名', lr.leave_type as '假別', lr.start_date as '開始時間',
+        lr.end_date as '結束時間', lr.duration as '時數', lr.reason as '事由',
+        lr.status as '狀態', lr.approver as '簽核人', lr.request_id as '假單ID'
     FROM leave_record lr
     JOIN employee e ON lr.employee_id = e.id
     WHERE STRFTIME('%Y-%m', lr.start_date) = ?
@@ -237,7 +214,6 @@ def get_leave_records_by_month(conn, year: int, month: int):
     """
     return pd.read_sql_query(query, conn, params=(month_str,))
 
-# 【新增函式】
 def get_leave_records_by_year(conn, year: int):
     """
     根據年份查詢所有已匯入的請假紀錄。
@@ -245,18 +221,26 @@ def get_leave_records_by_year(conn, year: int):
     year_str = str(year)
     query = """
     SELECT
-        e.name_ch as '員工姓名',
-        lr.leave_type as '假別',
-        lr.start_date as '開始時間',
-        lr.end_date as '結束時間',
-        lr.duration as '時數',
-        lr.reason as '事由',
-        lr.status as '狀態',
-        lr.approver as '簽核人',
-        lr.request_id as '假單ID'
+        e.name_ch as '員工姓名', lr.leave_type as '假別', lr.start_date as '開始時間',
+        lr.end_date as '結束時間', lr.duration as '時數', lr.reason as '事由',
+        lr.status as '狀態', lr.approver as '簽核人', lr.request_id as '假單ID'
     FROM leave_record lr
     JOIN employee e ON lr.employee_id = e.id
     WHERE STRFTIME('%Y', lr.start_date) = ? AND lr.status = '已通過'
     ORDER BY e.name_ch, lr.start_date
     """
     return pd.read_sql_query(query, conn, params=(year_str,))
+
+def get_leave_hours_for_period(conn, employee_id, leave_type, start_date, end_date):
+    """查詢指定員工在特定時間區間內，特定假別的總時數。"""
+    sql = """
+    SELECT SUM(duration) 
+    FROM leave_record 
+    WHERE employee_id = ? 
+      AND leave_type = ? 
+      AND status = '已通過' 
+      AND date(start_date) BETWEEN ? AND ?
+    """
+    cursor = conn.cursor()
+    result = cursor.execute(sql, (employee_id, leave_type, start_date, end_date)).fetchone()
+    return result[0] if result and result[0] is not None else 0
