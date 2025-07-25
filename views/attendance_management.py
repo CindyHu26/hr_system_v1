@@ -1,8 +1,9 @@
-# pages/attendance_management.py
+# views/attendance_management.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime, time
 import traceback
+from dateutil.relativedelta import relativedelta
 
 # 導入新的、拆分後的查詢模組和服務模組
 from db import queries_attendance as q_att
@@ -24,8 +25,10 @@ def show_page(conn):
         st.subheader("查詢與手動編輯紀錄")
         c1, c2 = st.columns(2)
         today = datetime.now()
-        year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 5, value=today.year, key="att_year")
-        month = c2.number_input("選擇月份", min_value=1, max_value=12, value=today.month, key="att_month")
+        #  計算上一個月的年份和月份
+        last_month = today - relativedelta(months=1)
+        year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 5, value=last_month.year, key="att_year")
+        month = c2.number_input("選擇月份", min_value=1, max_value=12, value=last_month.month, key="att_month")
 
         try:
             att_df = q_att.get_attendance_by_month(conn, year, month)

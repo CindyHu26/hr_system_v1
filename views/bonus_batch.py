@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 # 導入新架構的模組
 from services import bonus_scraper as scraper
@@ -20,8 +21,10 @@ def show_page(conn):
         
         c3, c4 = st.columns(2)
         today = datetime.now()
-        year = c3.number_input("選擇獎金歸屬年份", min_value=2020, max_value=today.year + 1, value=today.year)
-        month = c4.number_input("選擇獎金歸屬月份", min_value=1, max_value=12, value=today.month)
+        # 計算上一個月的年份和月份
+        last_month = today - relativedelta(months=1)
+        year = c3.number_input("選擇獎金歸屬年份", min_value=2020, max_value=today.year + 1, value=last_month.year)
+        month = c4.number_input("選擇獎金歸屬月份", min_value=1, max_value=12, value=last_month.month)
         
         submitted = st.form_submit_button("執行資料抓取與計算", type="primary")
 

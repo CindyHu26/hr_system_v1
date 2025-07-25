@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 from db import queries_attendance as q_att
 
@@ -13,10 +14,20 @@ def show_page(conn):
     st.subheader("篩選條件")
     c1, c2 = st.columns([1, 1])
     today = datetime.now()
-    year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 5, value=today.year, key="lh_year")
+    last_month = today - relativedelta(months=1) # [新增] 計算上一個月
+
+    year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 5, value=last_month.year, key="lh_year")
     
     month_options = {f"{i}月": i for i in range(1, 13)}
     month_options["全年"] = 0
+    
+    # 讓 selectbox 預設選中上一個月
+    selected_month_name = c2.selectbox(
+        "選擇月份 (可選 '全年' 進行年度統計)", 
+        options=list(month_options.keys()), 
+        index=last_month.month - 1 # 月份是1-12，索引是0-11
+    )
+    month = month_options[selected_month_name]
     
     selected_month_name = c2.selectbox(
         "選擇月份 (可選 '全年' 進行年度統計)", 

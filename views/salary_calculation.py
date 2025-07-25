@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import traceback
+from dateutil.relativedelta import relativedelta
 
 # 導入所有需要的、已拆分的模組
 from services import salary_logic as logic_salary
@@ -14,8 +15,10 @@ def show_page(conn):
     
     c1, c2 = st.columns(2)
     today = datetime.now()
-    year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 1, value=today.year)
-    month = c2.number_input("選擇月份", min_value=1, max_value=12, value=today.month)
+    # 計算上一個月的年份和月份
+    last_month = today - relativedelta(months=1)
+    year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 1, value=last_month.year)
+    month = c2.number_input("選擇月份", min_value=1, max_value=12, value=last_month.month)
 
     st.write("---")
     

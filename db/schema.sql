@@ -100,3 +100,18 @@ CREATE TABLE IF NOT EXISTS monthly_bonus (
     bonus_amount REAL NOT NULL, note TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(employee_id, year, month)
 );
+
+-- --- 索引優化 (Index Optimizations) ---
+-- 提升依員工ID查詢各項紀錄的速度
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_attendance ON attendance (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_special_attendance ON special_attendance (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_leave_record ON leave_record (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_salary_base_history ON salary_base_history (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_salary ON salary (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_employee_salary_item ON employee_salary_item (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_monthly_bonus ON monthly_bonus (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_employee_company_history ON employee_company_history (employee_id);
+
+-- 提升依日期篩選紀錄的速度
+CREATE INDEX IF NOT EXISTS idx_date_on_attendance ON attendance (date);
+CREATE INDEX IF NOT EXISTS idx_date_on_leave_record ON leave_record (start_date);

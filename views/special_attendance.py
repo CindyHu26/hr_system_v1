@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, time
-
+from dateutil.relativedelta import relativedelta
 # 導入新的、拆分後的查詢模組
 from db import queries_attendance as q_att
 from db import queries_employee as q_emp
@@ -15,8 +15,10 @@ def show_page(conn):
     # --- 1. 查詢與顯示 ---
     c1, c2 = st.columns(2)
     today = datetime.now()
-    year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 5, value=today.year, key="sa_year")
-    month = c2.number_input("選擇月份", min_value=1, max_value=12, value=today.month, key="sa_month")
+    # 計算上一個月的年份和月份
+    last_month = today - relativedelta(months=1)
+    year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 5, value=last_month.year, key="sa_year")
+    month = c2.number_input("選擇月份", min_value=1, max_value=12, value=last_month.month, key="sa_month")
 
     try:
         sa_df = q_att.get_special_attendance_by_month(conn, year, month)
