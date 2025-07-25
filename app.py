@@ -8,6 +8,7 @@ from views import (
     attendance_management,
     special_attendance,
     leave_analysis,
+    leave_history,
     salary_item_management,
     insurance_grade_management, 
     salary_base_history,
@@ -20,7 +21,7 @@ from views import (
 )
 
 # --- 頁面設定 ---
-st.set_page_config(layout="wide", page_title="輕量人資系統 v1.0")
+st.set_page_config(layout="wide", page_title="人資系統 v1.0")
 
 # --- 資料庫連線 ---
 conn = init_connection()
@@ -38,6 +39,7 @@ PAGES_ATTENDANCE = {
     "📅 出勤紀錄管理": attendance_management,
     "📝 特別出勤管理": special_attendance,
     "🌴 請假與異常分析": leave_analysis,
+    "📖 請假紀錄總覽": leave_history,
     "🏖️ 年度特休計算": annual_leave,
 }
 PAGES_SALARY = {

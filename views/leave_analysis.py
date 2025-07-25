@@ -84,6 +84,18 @@ def show_page(conn):
                 except Exception as e:
                     st.error(f"匯入時發生錯誤: {e}")
                     st.code(traceback.format_exc())
+    # 【重要改進】在 Tab 之外，顯示上一次的匯入結果
+    if 'last_import_success' in st.session_state:
+        if st.session_state['last_import_success']:
+            st.success(f"成功匯入/更新了 {st.session_state['last_import_count']} 筆請假紀錄！")
+            st.markdown("#### 本次匯入紀錄預覽：")
+            st.dataframe(st.session_state['last_imported_df'], use_container_width=True)
+        # 顯示完畢後，可以選擇清除狀態，避免一直顯示
+        if st.button("清除匯入結果訊息"):
+            del st.session_state['last_import_success']
+            del st.session_state['last_import_count']
+            del st.session_state['last_imported_df']
+            st.rerun()
 
     with tab2:
         st.subheader("交叉比對缺勤紀錄與假單")
@@ -93,7 +105,6 @@ def show_page(conn):
         
         c1, c2 = st.columns(2)
         today = datetime.now()
-        # 預設為上個月，方便人資操作
         last_month = today - relativedelta(months=1)
         year_conflict = c1.number_input("年份", min_value=2020, max_value=today.year + 1, value=last_month.year, key="conflict_year")
         month_conflict = c2.number_input("月份", min_value=1, max_value=12, value=last_month.month, key="conflict_month")
