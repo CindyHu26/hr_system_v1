@@ -125,7 +125,6 @@ def calculate_leave_hours(start_dt, end_dt, calendar_status_messages):
             current_date += timedelta(days=1)
             continue
 
-        # 【關鍵修正】將所有 start_date 和 end_date 改為正確的參數名稱 start_dt 和 end_dt
         day_leave_start = start_dt.time() if current_date == start_dt.date() else time.min
         day_leave_end = end_dt.time() if current_date == end_dt.date() else time.max
         
@@ -176,7 +175,6 @@ def process_leave_file(source_input, year=None, month=None):
         processed_records = []
         for _, row in df.iterrows():
             try:
-                # 日期時間解析的邏輯維持不變，確保穩定性
                 start_date_obj = pd.to_datetime(row['Start Date'])
                 end_date_obj = pd.to_datetime(row['End Date'])
 
@@ -238,11 +236,20 @@ def process_leave_file(source_input, year=None, month=None):
                         st.warning(f"⚠️ {msg}")
         raise ValueError(f"處理請假檔案時發生錯誤: {e}")
 
+# --- 【V5 版邏輯】 ---
+def is_time_present(time_val):
+    """
+    更穩健的時間存在性檢查，處理 None, NaN, 空字串, 或 '-', '--'。
+    """
+    if pd.isna(time_val):
+        return False
+    time_val_str = str(time_val).strip()
+    return not (not time_val_str or time_val_str == '-' or time_val_str == '--')
+
 def analyze_attendance_leave_conflicts(conn, year: int, month: int):
     """
-    交叉比對指定月份的出勤與假單，找出兩種異常：
-    1. 有缺席紀錄但無假單。
-    2. 有全天/半天假單但仍有出勤紀錄。
+    交叉比對指定月份的出勤與假單，找出異常情況。
+    - V5: 最終修正版，精準判斷部分工時假的衝突。
     """
     attendance_df, leave_df = q_att.get_monthly_attendance_and_leave_data(conn, year, month)
     
@@ -250,7 +257,6 @@ def analyze_attendance_leave_conflicts(conn, year: int, month: int):
         return pd.DataFrame({'分析結果': ['該月份無任何出勤紀錄可供分析。']})
 
     conflict_records = []
-
     # --- 預處理 ---
     attendance_df['date'] = pd.to_datetime(attendance_df['date']).dt.date
     leave_df['start_dt'] = pd.to_datetime(leave_df['start_date'])
@@ -259,47 +265,50 @@ def analyze_attendance_leave_conflicts(conn, year: int, month: int):
     # --- 遍歷每一筆出勤紀錄 ---
     for _, att_row in attendance_df.iterrows():
         date_str = att_row['date'].strftime('%Y-%m-%d')
+        current_day = att_row['date']
         
-        # 找出當天該員工的所有假單
         employee_leaves = leave_df[
             (leave_df['employee_id'] == att_row['employee_id']) &
-            (leave_df['start_dt'].dt.date <= att_row['date']) &
-            (leave_df['end_dt'].dt.date >= att_row['date'])
-        ].copy() # 使用 .copy() 避免 SettingWithCopyWarning
+            (leave_df['start_dt'].dt.date <= current_day) &
+            (leave_df['end_dt'].dt.date >= current_day)
+        ].copy()
         
         has_leave = not employee_leaves.empty
         leave_types = ", ".join(employee_leaves['leave_type'].unique()) if has_leave else "無"
         
-        # --- 產生請假時間區間文字 ---
+        # --- 判斷假別類型 ---
         leave_time_str = ""
         is_full_day_leave = False
-        is_morning_leave = False
-        is_afternoon_leave = False
-
+        
         if has_leave:
-            # 計算當天的請假區間
-            day_start_time = time.min
-            if employee_leaves['start_dt'].iloc[0].date() == att_row['date']:
-                day_start_time = employee_leaves['start_dt'].iloc[0].time()
-
-            day_end_time = time.max
-            if employee_leaves['end_dt'].iloc[0].date() == att_row['date']:
-                day_end_time = employee_leaves['end_dt'].iloc[0].time()
+            for _, leave_row in employee_leaves.iterrows():
+                leave_start, leave_end = leave_row['start_dt'], leave_row['end_dt']
+                if (leave_start.date() < current_day < leave_end.date() or
+                    (leave_start.date() == current_day < leave_end.date() and leave_start.time() <= time(8, 0)) or
+                    (leave_start.date() < current_day == leave_end.date() and leave_end.time() >= time(17, 0)) or
+                    (leave_start.date() == current_day == leave_end.date() and leave_row['duration'] >= 8)):
+                    is_full_day_leave = True
+                    break
             
-            # 判斷假別類型
-            if (day_start_time <= time(8,0) and day_end_time >= time(17,0)) or employee_leaves['duration'].sum() >= 8:
-                is_full_day_leave = True
+            if is_full_day_leave:
                 leave_time_str = "全天"
             else:
-                leave_time_str = f"{day_start_time.strftime('%H:%M')}-{day_end_time.strftime('%H:%M')}"
-                if day_start_time < time(12, 0):
-                    is_morning_leave = True
-                if day_end_time > time(13, 0):
-                    is_afternoon_leave = True
-
+                day_start = employee_leaves['start_dt'].min()
+                day_end = employee_leaves['end_dt'].max()
+                day_start_time = day_start.time() if day_start.date() == current_day else time.min
+                day_end_time = day_end.time() if day_end.date() == current_day else time.max
+                leave_time_str = f"{day_start_time.strftime('%H:%M')} - {day_end_time.strftime('%H:%M')}"
 
         # --- 開始分析 ---
-        # 情況一：有缺席紀錄，但系統中完全沒有當天的假單
+        has_checkin = is_time_present(att_row['checkin_time'])
+        has_checkout = is_time_present(att_row['checkout_time'])
+        has_any_clock = has_checkin or has_checkout
+        
+        # 情況 0: 正常的全天假 (請了全天假且無任何打卡紀錄)
+        if is_full_day_leave and not has_any_clock:
+            continue
+
+        # 情況 1: 有缺席紀錄但查無假單
         if att_row['absent_minutes'] > 0 and not has_leave:
             conflict_records.append({
                 '員工姓名': att_row['name_ch'], '日期': date_str,
@@ -308,35 +317,48 @@ def analyze_attendance_leave_conflicts(conn, year: int, month: int):
                 '分析結果': f"⚠️ 異常：缺席 {att_row['absent_minutes']} 分鐘，但查無假單。"
             })
             continue
-
-        # 情況二：有請假，但出勤狀況與假單不符
+        
+        # 情況 2: 有假單，但與打卡紀錄衝突
         if has_leave:
-            # 請了全天假，卻有打卡紀錄
-            if is_full_day_leave and (pd.notna(att_row['checkin_time']) or pd.notna(att_row['checkout_time'])):
+            if is_full_day_leave and has_any_clock:
                 conflict_records.append({
                     '員工姓名': att_row['name_ch'], '日期': date_str,
                     '簽到時間': att_row['checkin_time'], '簽退時間': att_row['checkout_time'],
                     '假別': leave_types, '請假時間': leave_time_str,
                     '分析結果': f"⚠️ 異常：請了全天假，但仍有打卡紀錄。"
                 })
-            
-            # 請了上午假，卻仍然有簽到紀錄
-            if is_morning_leave and not is_full_day_leave and pd.notna(att_row['checkin_time']):
-                 conflict_records.append({
-                    '員工姓名': att_row['name_ch'], '日期': date_str,
-                    '簽到時間': att_row['checkin_time'], '簽退時間': att_row['checkout_time'],
-                    '假別': leave_types, '請假時間': leave_time_str,
-                    '分析結果': f"❓ 提醒：請了上午的假，但仍有簽到紀錄。"
-                })
+            elif not is_full_day_leave and has_any_clock:
+                is_conflict = False
+                conflict_details = []
+                try:
+                    clock_in_time = datetime.strptime(str(att_row['checkin_time']), '%H:%M:%S').time() if has_checkin else None
+                    clock_out_time = datetime.strptime(str(att_row['checkout_time']), '%H:%M:%S').time() if has_checkout else None
 
-            # 請了下午假，卻仍然有簽退紀錄
-            if is_afternoon_leave and not is_full_day_leave and pd.notna(att_row['checkout_time']):
-                 conflict_records.append({
-                    '員工姓名': att_row['name_ch'], '日期': date_str,
-                    '簽到時間': att_row['checkin_time'], '簽退時間': att_row['checkout_time'],
-                    '假別': leave_types, '請假時間': leave_time_str,
-                    '分析結果': f"❓ 提醒：請了下午的假，但仍有簽退紀錄。"
-                })
+                    for _, leave_row in employee_leaves.iterrows():
+                        leave_start, leave_end = leave_row['start_dt'], leave_row['end_dt']
+                        leave_day_start = leave_start.time() if leave_start.date() == current_day else time.min
+                        leave_day_end = leave_end.time() if leave_end.date() == current_day else time.max
+                        
+                        # 檢查簽到時間是否落在請假區間
+                        if clock_in_time and leave_day_start <= clock_in_time < leave_day_end:
+                            is_conflict = True
+                            conflict_details.append("簽到時間在假單內")
+                        
+                        # 檢查簽退時間是否落在請假區間
+                        if clock_out_time and leave_day_start < clock_out_time <= leave_day_end:
+                            is_conflict = True
+                            conflict_details.append("簽退時間在假單內")
+                except (ValueError, TypeError):
+                    is_conflict = True
+                    conflict_details.append("打卡時間格式錯誤")
+
+                if is_conflict:
+                    conflict_records.append({
+                        '員工姓名': att_row['name_ch'], '日期': date_str,
+                        '簽到時間': att_row['checkin_time'], '簽退時間': att_row['checkout_time'],
+                        '假別': leave_types, '請假時間': leave_time_str,
+                        '分析結果': f"❓ 提醒：{', '.join(list(set(conflict_details)))}。"
+                    })
 
     if not conflict_records:
         return pd.DataFrame({'分析結果': ['✅ 完美！該月份的出勤與請假紀錄沒有發現明顯衝突。']})

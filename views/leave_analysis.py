@@ -45,7 +45,6 @@ def show_page(conn):
                 st.warning("請提供資料來源！")
             else:
                 try:
-                    # 【修改點】簡化呼叫，所有邏輯都封裝在 process_leave_file 中
                     with st.spinner("正在讀取、篩選並核算所有假單..."):
                         checked_df = logic_leave.process_leave_file(source_input, year=year, month=month)
                     
@@ -84,13 +83,12 @@ def show_page(conn):
                 except Exception as e:
                     st.error(f"匯入時發生錯誤: {e}")
                     st.code(traceback.format_exc())
-    # 【重要改進】在 Tab 之外，顯示上一次的匯入結果
+
     if 'last_import_success' in st.session_state:
         if st.session_state['last_import_success']:
             st.success(f"成功匯入/更新了 {st.session_state['last_import_count']} 筆請假紀錄！")
             st.markdown("#### 本次匯入紀錄預覽：")
             st.dataframe(st.session_state['last_imported_df'], use_container_width=True)
-        # 顯示完畢後，可以選擇清除狀態，避免一直顯示
         if st.button("清除匯入結果訊息"):
             del st.session_state['last_import_success']
             del st.session_state['last_import_count']
@@ -99,7 +97,7 @@ def show_page(conn):
 
     with tab2:
         st.subheader("交叉比對缺勤紀錄與假單")
-        st.info("此功能會掃描指定月份中，所有員工在打卡機上的「缺席」紀錄，並與資料庫中「已通過」的假單進行比對，幫助您找出『有缺席但沒請假』的異常情況。")
+        st.info("此功能會掃描指定月份中，所有員工在打卡機上的「缺席」紀錄，並與資料庫中「已通過」的假單進行比對，幫助您找出『有缺席但沒請假』或『請假與打卡衝突』的異常情況。")
         st.write("---")
         st.markdown("#### 請選擇比對月份")
         
@@ -112,8 +110,11 @@ def show_page(conn):
         if st.button("開始交叉比對", key="conflict_button", type="primary"):
             with st.spinner(f"正在分析 {year_conflict} 年 {month_conflict} 月的資料..."):
                 try:
-                    conflict_df = logic_leave.analyze_attendance_leave_conflicts(conn, year_conflict, month_conflict)
-                    st.session_state['conflict_analysis_result'] = conflict_df
+                    # 【核心修改】直接從 services 層獲取完整的比對結果
+                    # 為了顯示所有紀錄，我們需要一個新的函式來獲取完整的出勤資料
+                    # 這裡我們假設 logic_leave.analyze_attendance_leave_conflicts 已經包含了所有員工的紀錄
+                    all_records_df = logic_leave.analyze_attendance_leave_conflicts(conn, year_conflict, month_conflict)
+                    st.session_state['conflict_analysis_result'] = all_records_df
                 except Exception as e:
                     st.error(f"分析時發生錯誤: {e}")
                     st.code(traceback.format_exc())
@@ -121,5 +122,16 @@ def show_page(conn):
         if 'conflict_analysis_result' in st.session_state:
             st.markdown("---")
             st.markdown("#### 分析報告")
+            
             result_df = st.session_state['conflict_analysis_result']
-            st.dataframe(result_df, use_container_width=True)
+            
+            # 【核心修改】新增一個勾選框
+            show_only_anomalies = st.checkbox("✔️ 僅顯示異常或提醒紀錄", value=True)
+            
+            if show_only_anomalies:
+                # 篩選出包含特定關鍵字的紀錄
+                anomalies_df = result_df[result_df['分析結果'].str.contains("⚠️|❓", na=False)]
+                st.dataframe(anomalies_df, use_container_width=True)
+            else:
+                # 顯示所有紀錄
+                st.dataframe(result_df, use_container_width=True)

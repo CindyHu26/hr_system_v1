@@ -150,7 +150,7 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
             parsed_submit_date = pd.to_datetime(submit_date_val, errors='coerce')
             submit_date_str = parsed_submit_date.strftime('%Y-%m-%d') if pd.notna(parsed_submit_date) else None
             
-            # 【修改】將 Details (事由) 和 Approver Name (簽核人) 加回到資料元組中
+            # 【修改】從 row 中讀取 'Reason' 和 'Approver' 欄位
             data_tuples.append((
                 row['employee_id'],
                 row['Request ID'],
@@ -158,9 +158,9 @@ def batch_insert_or_update_leave_records(conn, df: pd.DataFrame):
                 pd.to_datetime(row['Start Date']).strftime('%Y-%m-%d %H:%M:%S'),
                 pd.to_datetime(row['End Date']).strftime('%Y-%m-%d %H:%M:%S'),
                 row['核算時數'],
-                row.get('Details'),  # 事由
+                row.get('Reason'),  # 事由
                 row.get('Status'),
-                row.get('Approver Name'),  # 簽核人
+                row.get('Approver'),  # 簽核人
                 submit_date_str,
                 row.get('備註')
             ))
@@ -236,3 +236,27 @@ def get_leave_records_by_month(conn, year: int, month: int):
     ORDER BY e.name_ch, lr.start_date
     """
     return pd.read_sql_query(query, conn, params=(month_str,))
+
+# 【新增函式】
+def get_leave_records_by_year(conn, year: int):
+    """
+    根據年份查詢所有已匯入的請假紀錄。
+    """
+    year_str = str(year)
+    query = """
+    SELECT
+        e.name_ch as '員工姓名',
+        lr.leave_type as '假別',
+        lr.start_date as '開始時間',
+        lr.end_date as '結束時間',
+        lr.duration as '時數',
+        lr.reason as '事由',
+        lr.status as '狀態',
+        lr.approver as '簽核人',
+        lr.request_id as '假單ID'
+    FROM leave_record lr
+    JOIN employee e ON lr.employee_id = e.id
+    WHERE STRFTIME('%Y', lr.start_date) = ? AND lr.status = '已通過'
+    ORDER BY e.name_ch, lr.start_date
+    """
+    return pd.read_sql_query(query, conn, params=(year_str,))
