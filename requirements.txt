@@ -1,10 +1,11 @@
 streamlit
 pandas
+numpy
 openpyxl
+requests
 selenium
-webdriver-manager
 beautifulsoup4
 lxml
-requests
 python-dotenv
-dateutils
+python-dateutil
+webdriver-manager
