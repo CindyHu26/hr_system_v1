@@ -136,7 +136,6 @@ def batch_upsert_salary_details(conn, data_to_upsert: list):
     except Exception as e:
         conn.rollback(); raise e
 
-# --- 【新增函式】 ---
 def get_annual_salary_summary_data(conn, year: int, item_ids: list):
     """獲取年度薪資總表的原始資料。"""
     if not item_ids:
@@ -157,3 +156,39 @@ def get_annual_salary_summary_data(conn, year: int, item_ids: list):
     """
     params = [year] + item_ids
     return pd.read_sql_query(query, conn, params=params)
+
+def get_cumulative_bonus_for_year(conn, employee_id: int, year: int, bonus_item_names: list):
+    """
+    查詢指定員工在特定年度中，所有獎金類項目的累計總額。
+    同時也會查詢已扣繳的二代健保補充費總額。
+    """
+    if not bonus_item_names:
+        return 0, 0
+
+    placeholders = ','.join('?' for _ in bonus_item_names)
+    
+    # 查詢累計獎金
+    bonus_query = f"""
+    SELECT SUM(sd.amount)
+    FROM salary_detail sd
+    JOIN salary s ON sd.salary_id = s.id
+    JOIN salary_item si ON sd.salary_item_id = si.id
+    WHERE s.employee_id = ? AND s.year = ? AND si.name IN ({placeholders});
+    """
+    bonus_params = [employee_id, year] + bonus_item_names
+    cursor = conn.cursor()
+    cumulative_bonus = cursor.execute(bonus_query, bonus_params).fetchone()[0] or 0
+
+    # 查詢已扣補充費
+    premium_query = """
+    SELECT SUM(sd.amount)
+    FROM salary_detail sd
+    JOIN salary s ON sd.salary_id = s.id
+    JOIN salary_item si ON sd.salary_item_id = si.id
+    WHERE s.employee_id = ? AND s.year = ? AND si.name = '二代健保補充費';
+    """
+    premium_params = (employee_id, year)
+    deducted_premium = cursor.execute(premium_query, premium_params).fetchone()[0] or 0
+    
+    # 因為扣款是負數，所以要取絕對值
+    return cumulative_bonus, abs(deducted_premium)

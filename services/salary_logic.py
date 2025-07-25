@@ -11,17 +11,16 @@ from db import queries_salary_base as q_base
 from db import queries_salary_records as q_records
 from db import queries_insurance as q_ins
 from db import queries_bonus as q_bonus
-from db import queries_allowances as q_allow # 導入津貼查詢
+from db import queries_allowances as q_allow 
 from services import overtime_logic
-from views.annual_leave import calculate_leave_entitlement # 引用特休計算規則
+from views.annual_leave import calculate_leave_entitlement 
 
 def calculate_salary_df(conn, year, month):
     """
     薪資試算引擎：根據各項資料計算全新的薪資草稿。
-    V2: 新增特休未休工資結算邏輯
+    V7: 導入符合法規的個人二代健保補充保費計算邏輯
     """
-    MINIMUM_WAGE_2025 = 28590
-    TAX_THRESHOLD = MINIMUM_WAGE_2025 * 1.5
+    TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
 
     employees = q_emp.get_active_employees_for_month(conn, year, month)
     if not employees:
@@ -43,44 +42,30 @@ def calculate_salary_df(conn, year, month):
         hourly_rate = base_salary / config.HOURLY_RATE_DIVISOR if config.HOURLY_RATE_DIVISOR > 0 else 0
         details['底薪'] = base_salary
         
-        # --- [功能新增] 特休未休工資結算 ---
         entry_date_str = emp['entry_date']
         if pd.notna(entry_date_str):
             entry_date = pd.to_datetime(entry_date_str).date()
-            # 只有在 "到職月份" 才觸發結算
             if entry_date.month == month:
-                # 結算 "前一個" 週年年度
                 last_anniversary_year_start = date(year - 1, entry_date.month, entry_date.day)
                 last_anniversary_year_end = last_anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
-
-                # 計算在該年度開始時的年資，以決定應有天數
                 service_at_start = relativedelta(last_anniversary_year_start, entry_date)
                 service_years = service_at_start.years + service_at_start.months / 12 + service_at_start.days / 365.25
-                
                 total_entitled_days = calculate_leave_entitlement(service_years)
-                
-                # 查詢該年度已休時數
                 used_hours = q_att.get_leave_hours_for_period(conn, emp_id, '特休', last_anniversary_year_start, last_anniversary_year_end)
                 used_days = round(used_hours / 8, 2)
-                
                 unused_days = total_entitled_days - used_days
-                
                 if unused_days > 0:
                     daily_wage = round(base_salary / 30)
                     payout_amount = int(round(unused_days * daily_wage))
-                    details['特休未休工資'] = payout_amount
-        # --- 特休結算結束 ---
+                    details['特休未休'] = payout_amount
 
         if emp_id in monthly_attendance.index:
             emp_att = monthly_attendance.loc[emp_id]
-            if emp_att.get('late_minutes', 0) > 0:
-                details['遲到'] = -int(round((emp_att['late_minutes'] / 60) * hourly_rate))
-            if emp_att.get('early_leave_minutes', 0) > 0:
-                details['早退'] = -int(round((emp_att['early_leave_minutes'] / 60) * hourly_rate))
-            if emp_att.get('overtime1_minutes', 0) > 0:
-                details['加班費(平日)'] = int(round((emp_att['overtime1_minutes'] / 60) * hourly_rate * 1.34))
-            if emp_att.get('overtime2_minutes', 0) > 0:
-                details['加班費(假日)'] = int(round((emp_att['overtime2_minutes'] / 60) * hourly_rate * 1.67))
+            if emp_att.get('late_minutes', 0) > 0: details['遲到'] = -int(round((emp_att['late_minutes'] / 60) * hourly_rate))
+            if emp_att.get('early_leave_minutes', 0) > 0: details['早退'] = -int(round((emp_att['early_leave_minutes'] / 60) * hourly_rate))
+            if emp_att.get('overtime1_minutes', 0) > 0: details['加班費(延長工時)'] = int(round((emp_att['overtime1_minutes'] / 60) * hourly_rate * 1.34))
+            re_extended_minutes = emp_att.get('overtime2_minutes', 0) + emp_att.get('overtime3_minutes', 0)
+            if re_extended_minutes > 0: details['加班費(再延長工時)'] = int(round((re_extended_minutes / 60) * hourly_rate * 1.67))
 
         for leave_type, hours in q_att.get_employee_leave_summary(conn, emp_id, year, month):
             if hours > 0:
@@ -97,37 +82,48 @@ def calculate_salary_df(conn, year, month):
             
         if emp['nationality'] and emp['nationality'] != 'TW':
             entry_date = datetime.strptime(emp['entry_date'], '%Y-%m-%d').date()
-            should_withhold = False
-            
-            if entry_date.year == year:
-                if month >= entry_date.month and month < entry_date.month + 6:
-                    should_withhold = True
-            elif entry_date.year < year:
-                if month >= 1 and month <= 6:
-                    should_withhold = True
-            
+            should_withhold = (entry_date.year == year and entry_date.month <= month < entry_date.month + 6) or \
+                              (entry_date.year < year and 1 <= month <= 6)
             if should_withhold and insurance_salary > 0:
-                tax_rate = 0.06 if insurance_salary <= TAX_THRESHOLD else 0.18
-                tax_amount = insurance_salary * tax_rate
-                details['預扣稅款'] = -int(round(tax_amount))
+                tax_rate = config.FOREIGNER_LOW_INCOME_TAX_RATE if insurance_salary <= TAX_THRESHOLD else config.FOREIGNER_HIGH_INCOME_TAX_RATE
+                details['稅款'] = -int(round(insurance_salary * tax_rate))
 
         special_ot_pay = overtime_logic.calculate_special_overtime_pay(conn, emp_id, year, month, hourly_rate)
-        if special_ot_pay > 0:
-            details['津貼加班'] = special_ot_pay
+        if special_ot_pay > 0: details['津貼加班'] = special_ot_pay
 
         bonus_result = q_bonus.get_employee_bonus(conn, emp_id, year, month)
-        if bonus_result:
-            details['業務獎金'] = int(round(bonus_result['bonus_amount']))
+        if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
+
+        # --- [核心修改] 二代健保補充保費計算 (個人高額獎金) ---
+        is_insured = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
+        if is_insured:
+            # 1. 計算當月發放的獎金總額
+            current_month_bonus = sum(details.get(item, 0) for item in config.NHI_BONUS_ITEMS)
+            
+            # 2. 只有當月有發放獎金時，才需要重算
+            if current_month_bonus > 0:
+                # 3. 查詢年度累計獎金 和 已扣補充保費
+                cumulative_bonus, already_deducted = q_records.get_cumulative_bonus_for_year(conn, emp_id, year, config.NHI_BONUS_ITEMS)
+                total_cumulative_bonus = cumulative_bonus + current_month_bonus
+
+                # 4. 計算免扣額
+                deduction_threshold = insurance_salary * config.NHI_BONUS_MULTIPLIER
+                
+                # 5. 計算應扣總額
+                taxable_bonus = total_cumulative_bonus - deduction_threshold
+                if taxable_bonus > 0:
+                    total_premium_due = round(taxable_bonus * config.NHI_SUPPLEMENT_RATE)
+                    # 6. 本月應扣 = 應扣總額 - 已扣總額
+                    this_month_premium = total_premium_due - already_deducted
+                    if this_month_premium > 0:
+                        details['二代健保補充費'] = -int(this_month_premium)
+        # --- 計算結束 ---
 
         all_salary_data.append(details)
 
     return pd.DataFrame(all_salary_data).fillna(0), item_types
 
-# --- 薪資單批次修改 ---
 def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
-    """
-    處理從 Excel 上傳的薪資單批次修改。
-    """
     report = {"success": 0, "skipped_emp": [], "skipped_item": [], "no_salary_record": []}
     
     try:
@@ -135,12 +131,10 @@ def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file
         if '員工姓名' not in df.columns:
             raise ValueError("Excel 檔案中缺少 '員工姓名' 欄位。")
 
-        # 獲取所有必要的映射表
         emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
         item_map_df = pd.read_sql("SELECT id, name, type FROM salary_item", conn)
         item_map = {row['name']: {'id': row['id'], 'type': row['type']} for _, row in item_map_df.iterrows()}
         
-        # 獲取當月所有薪資主紀錄的 ID
         salary_main_df = pd.read_sql("SELECT id, employee_id FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
         salary_id_map = salary_main_df.set_index('employee_id')['id'].to_dict()
 
@@ -168,17 +162,13 @@ def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file
                     report["skipped_item"].append(item_name)
                     continue
 
-                # 根據項目類型決定金額正負號
                 final_amount = -abs(float(amount)) if item_info['type'] == 'deduction' else abs(float(amount))
                 
-                # 將準備好的資料加入列表
                 data_to_upsert.append((salary_id, item_info['id'], int(final_amount)))
 
-        # 批次執行資料庫操作
         if data_to_upsert:
             report["success"] = q_records.batch_upsert_salary_details(conn, data_to_upsert)
             
-        # 清理回報訊息
         report["skipped_emp"] = list(set(report["skipped_emp"]))
         report["skipped_item"] = list(set(report["skipped_item"]))
         return report
