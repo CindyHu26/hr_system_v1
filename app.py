@@ -54,7 +54,7 @@ PAGES_SALARY = {
 PAGES_REPORTING = {
     "📊 年度薪資總表": annual_summary,
     "📈 健保補充保費試算": nhi_summary,
-    "📅 出勤月報表匯出": attendance_report,
+    "📅 出勤日報表匯出": attendance_report,
 }
 
 ALL_PAGES = {**PAGES_ADMIN, **PAGES_ATTENDANCE, **PAGES_SALARY, **PAGES_REPORTING}
