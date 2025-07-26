@@ -5,18 +5,19 @@ from datetime import datetime, date
 
 from db import queries_salary_base as q_base 
 from db import queries_employee as q_emp
+from db import queries_insurance as q_ins
 from utils.helpers import to_date
 from utils.ui_components import create_batch_import_section
 from services import salary_base_logic as logic_base
 
 SALARY_BASE_TEMPLATE_COLUMNS = {
-    'name_ch': '員工姓名*', 'base_salary': '底薪*', 'insurance_salary': '勞健保投保薪資*',
+    'name_ch': '員工姓名*', 'base_salary': '底薪*', 
     'dependents': '健保眷屬數*', 'start_date': '生效日*(YYYY-MM-DD)', 
     'end_date': '結束日(YYYY-MM-DD)', 'note': '備註'
 }
 
 def show_page(conn):
-    st.header("📈 薪資基準管理")
+    st.header("📈 基本工資管理")
     st.info("管理每位員工的歷次調薪、投保薪資與眷屬數量變更紀錄。")
 
     # --- 功能區 1: 一鍵更新基本工資 ---
@@ -64,7 +65,6 @@ def show_page(conn):
     st.subheader("歷史紀錄總覽與手動操作")
     
     try:
-        # 【關鍵修正】改用 q_base
         history_df_raw = q_base.get_salary_base_history(conn)
         history_df_display = history_df_raw.rename(columns={
             'name_ch': '員工姓名', 'base_salary': '底薪', 'insurance_salary': '投保薪資',
@@ -85,10 +85,9 @@ def show_page(conn):
 
         with st.form("add_base_history", clear_on_submit=True):
             selected_emp_key = st.selectbox("選擇員工*", options=emp_options.keys())
-            c1, c2, c3 = st.columns(3)
+            c1, c2 = st.columns(2)
             base_salary = c1.number_input("底薪*", min_value=0)
-            insurance_salary = c2.number_input("勞健保投保薪資*", min_value=0, help="若為 0，將預設等同底薪")
-            dependents = c3.number_input("健保眷屬數*", min_value=0, step=1, format="%d")
+            dependents = c2.number_input("健保眷屬數*", min_value=0, step=1, format="%d")
             
             c4, c5 = st.columns(2)
             start_date = c4.date_input("生效日*", value=datetime.now())
@@ -96,17 +95,19 @@ def show_page(conn):
             note = st.text_area("備註")
 
             if st.form_submit_button("確認新增"):
+                # [核心修改] 自動查詢投保薪資
+                insurance_salary = q_ins.get_insurance_salary_level(conn, base_salary)
+                
                 data = {
                     'employee_id': emp_options[selected_emp_key], 
                     'base_salary': base_salary,
-                    'insurance_salary': insurance_salary if insurance_salary > 0 else base_salary, 
+                    'insurance_salary': insurance_salary, 
                     'dependents': dependents,
                     'start_date': start_date.strftime('%Y-%m-%d'),
                     'end_date': end_date.strftime('%Y-%m-%d') if end_date else None,
                     'note': note
                 }
-                # 注意：這裡呼叫的是 q_emp.add_record，這是通用的函式，不需更動
-                q_emp.add_record(conn, 'salary_base_history', data)
+                q_base.add_record(conn, 'salary_base_history', data) # 這裡應該用 q_common 或 q_base, 但 q_emp 也可以
                 st.success("成功新增紀錄！")
                 st.rerun()
 
@@ -121,10 +122,9 @@ def show_page(conn):
                 
                 with st.form(f"edit_base_history_{record_id}"):
                     st.write(f"正在編輯 **{record_data['name_ch']}** 的紀錄 (ID: {record_id})")
-                    c1, c2, c3 = st.columns(3)
+                    c1, c2 = st.columns(2)
                     base_salary_edit = c1.number_input("底薪*", min_value=0, value=int(record_data['base_salary']))
-                    ins_salary_edit = c2.number_input("勞健保投保薪資*", min_value=0, value=int(record_data.get('insurance_salary') or record_data['base_salary']))
-                    dependents_edit = c3.number_input("健保眷屬數*", min_value=0, step=1, format="%d", value=int(record_data.get('dependents', 0)))
+                    dependents_edit = c2.number_input("健保眷屬數*", min_value=0, step=1, format="%d", value=int(record_data.get('dependents', 0)))
                     
                     c4, c5 = st.columns(2)
                     start_date_edit = c4.date_input("生效日*", value=to_date(record_data.get('start_date')))
@@ -133,20 +133,22 @@ def show_page(conn):
                     
                     c_update, c_delete = st.columns(2)
                     if c_update.form_submit_button("儲存變更", use_container_width=True):
+                        # [核心修改] 儲存時也自動更新投保薪資
+                        insurance_salary_edit = q_ins.get_insurance_salary_level(conn, base_salary_edit)
                         updated_data = {
                             'base_salary': base_salary_edit,
-                            'insurance_salary': ins_salary_edit if ins_salary_edit > 0 else base_salary_edit,
+                            'insurance_salary': insurance_salary_edit,
                             'dependents': dependents_edit,
                             'start_date': start_date_edit.strftime('%Y-%m-%d') if start_date_edit else None,
                             'end_date': end_date_edit.strftime('%Y-%m-%d') if end_date_edit else None,
                             'note': note_edit
                         }
-                        q_emp.update_record(conn, 'salary_base_history', record_id, updated_data)
+                        q_base.update_record(conn, 'salary_base_history', record_id, updated_data)
                         st.success(f"紀錄 ID:{record_id} 已更新！")
                         st.rerun()
 
                     if c_delete.form_submit_button("🔴 刪除此紀錄", use_container_width=True, type="primary"):
-                        q_emp.delete_record(conn, 'salary_base_history', record_id)
+                        q_base.delete_record(conn, 'salary_base_history', record_id)
                         st.warning(f"紀錄 ID:{record_id} 已刪除！")
                         st.rerun()
         else:
@@ -154,7 +156,7 @@ def show_page(conn):
 
     with tab3:
         create_batch_import_section(
-            info_text="說明：系統會以「員工姓名」和「生效日」為唯一鍵，若紀錄已存在則會更新，否則新增。",
+            info_text="說明：系統會以「員工姓名」和「生效日」為唯一鍵，若紀錄已存在則會更新，否則新增。投保薪資將會依據底薪自動從級距表帶入。",
             template_columns=SALARY_BASE_TEMPLATE_COLUMNS,
             template_file_name="salary_base_template.xlsx",
             import_logic_func=logic_base.batch_import_salary_base,

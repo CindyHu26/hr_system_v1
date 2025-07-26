@@ -7,7 +7,8 @@ from datetime import datetime
 from db import queries_salary_items as q_items
 from db import queries_allowances as q_allow
 from db import queries_common as q_common
-from utils.ui_components import employee_selector
+from utils.ui_components import employee_selector, create_batch_import_section
+from services import allowance_logic as logic_allow
 
 def show_page(conn):
     st.header("➕ 員工常態薪資項設定")
@@ -19,7 +20,7 @@ def show_page(conn):
         st.error(f"讀取設定總覽時發生錯誤: {e}")
         all_settings_df = pd.DataFrame()
 
-    tab1, tab2 = st.tabs([" ✨ 新增/修改設定", "📖 所有設定總覽"])
+        tab1, tab2, tab3 = st.tabs([" ✨ 批次新增設定", "📖 所有設定總覽", "🚀 批次匯入 (Excel)"])
 
     with tab1:
         st.subheader("批次新增設定")
@@ -79,3 +80,15 @@ def show_page(conn):
                         st.warning("請先選擇一筆要刪除的紀錄。")
         else:
             st.info("目前沒有任何常態薪資項設定。")
+            
+    with tab3:
+        create_batch_import_section(
+            info_text="說明：系統會以「員工姓名 + 項目名稱 + 生效日」為唯一鍵，若紀錄已存在則會更新，否則新增。",
+            template_columns={
+                'name_ch': '員工姓名*', 'item_name': '項目名稱*', 'amount': '金額*',
+                'start_date': '生效日*(YYYY-MM-DD)', 'end_date': '結束日(YYYY-MM-DD)', 'note': '備註'
+            },
+            template_file_name="allowances_template.xlsx",
+            import_logic_func=logic_allow.batch_import_allowances,
+            conn=conn
+        )

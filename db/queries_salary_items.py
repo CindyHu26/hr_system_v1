@@ -42,3 +42,26 @@ def delete_salary_item(conn, item_id: int):
 def get_item_types(conn):
     """獲取薪資項目的名稱與類型對應字典。"""
     return pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
+
+# --- [新增函式] ---
+def batch_add_or_update_salary_items(conn, df: pd.DataFrame):
+    """批次新增或更新薪資項目。"""
+    cursor = conn.cursor()
+    sql = """
+    INSERT INTO salary_item (name, type, is_active) VALUES (?, ?, ?)
+    ON CONFLICT(name) DO UPDATE SET
+        type = excluded.type,
+        is_active = excluded.is_active;
+    """
+    try:
+        data_tuples = [
+            (row['name'], row['type'], row['is_active'])
+            for _, row in df.iterrows()
+        ]
+        cursor.executemany(sql, data_tuples)
+        conn.commit()
+        # 在SQLite中，executemany後的rowcount不準確，但此處回報受影響行數
+        return {'inserted': cursor.rowcount, 'updated': 0} 
+    except Exception as e:
+        conn.rollback()
+        raise e

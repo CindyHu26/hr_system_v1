@@ -4,6 +4,7 @@
 包含：員工加退保歷史、勞健保級距表管理。
 """
 import pandas as pd
+from utils.helpers import get_monthly_dates
 
 # --- Employee Insurance History ---
 
@@ -35,8 +36,6 @@ def get_employee_insurance_fee(conn, insurance_salary):
     
     return labor_fee, health_fee
 
-# --- Insurance Grade Management (新增的函式) ---
-
 def get_insurance_grades(conn):
     """取得所有勞健保級距資料。"""
     return pd.read_sql_query("SELECT * FROM insurance_grade ORDER BY start_date DESC, type, grade", conn)
@@ -46,7 +45,6 @@ def batch_insert_or_replace_grades(conn, df: pd.DataFrame, grade_type: str, star
     cursor = conn.cursor()
     start_date_str = start_date.strftime('%Y-%m-%d')
     
-    # 使用 ON CONFLICT(start_date, type, grade) DO UPDATE 確保資料的唯一性
     sql = """
     INSERT INTO insurance_grade (
         start_date, type, grade, salary_min, salary_max, 
@@ -83,7 +81,6 @@ def batch_add_or_update_insurance_history(conn, df: pd.DataFrame):
     cursor = conn.cursor()
     report = {'inserted': 0, 'updated': 0, 'errors': []}
     
-    # 預先載入員工姓名映射表
     emp_map = pd.read_sql("SELECT name_ch, id FROM employee", conn).set_index('name_ch')['id'].to_dict()
     comp_map = pd.read_sql("SELECT name, id FROM company", conn).set_index('name')['id'].to_dict()
 
@@ -94,7 +91,6 @@ def batch_add_or_update_insurance_history(conn, df: pd.DataFrame):
     try:
         cursor.execute("BEGIN TRANSACTION")
         for index, row in df.iterrows():
-            # 【修改】從姓名取得 emp_id
             emp_id = emp_map.get(row['name_ch'])
             comp_id = comp_map.get(row['company_name'])
 
@@ -120,3 +116,26 @@ def batch_add_or_update_insurance_history(conn, df: pd.DataFrame):
         report['errors'].append({'row': 'N/A', 'reason': f'資料庫操作失敗: {e}'})
     
     return report
+
+def get_insurance_salary_level(conn, base_salary: float):
+    """根據薪資查詢對應的健保投保級距金額(上限)。"""
+    if not base_salary or base_salary <= 0:
+        return base_salary
+        
+    # 優先使用健保('health')級距來決定投保薪資
+    sql = """
+    SELECT salary_max 
+    FROM insurance_grade 
+    WHERE type = 'health' 
+      AND ? BETWEEN salary_min AND salary_max 
+    ORDER BY start_date DESC 
+    LIMIT 1
+    """
+    result = conn.execute(sql, (base_salary,)).fetchone()
+    
+    if result:
+        return result[0]
+    else:
+        # 如果找不到對應級距（可能薪資超過最高級距），則回傳薪資本身或一個預設上限
+        # 這裡我們回傳薪資本身，讓薪資計算邏輯去處理
+        return base_salary

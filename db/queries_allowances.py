@@ -53,16 +53,14 @@ def get_settings_grouped_by_amount(conn, salary_item_id):
     }
 
 def batch_add_or_update_employee_salary_items(conn, employee_ids, salary_item_id, amount, start_date, end_date, note):
-    """批次新增或更新員工的常態薪資設定（如果已存在就覆蓋）。"""
+    """批次新增或更新員工的常態薪資設定"""
     cursor = conn.cursor()
     try:
         cursor.execute("BEGIN TRANSACTION")
         
-        # 先刪除這些員工已有的相同項目設定
         placeholders = ','.join('?' for _ in employee_ids)
         cursor.execute(f"DELETE FROM employee_salary_item WHERE salary_item_id = ? AND employee_id IN ({placeholders})", [salary_item_id] + employee_ids)
         
-        # 再批次插入新的設定
         data_tuples = [(emp_id, salary_item_id, amount, start_date, end_date, note) for emp_id in employee_ids]
         cursor.executemany("INSERT INTO employee_salary_item (employee_id, salary_item_id, amount, start_date, end_date, note) VALUES (?, ?, ?, ?, ?, ?)", data_tuples)
         
@@ -71,3 +69,50 @@ def batch_add_or_update_employee_salary_items(conn, employee_ids, salary_item_id
     except Exception as e:
         conn.rollback()
         raise e
+
+def batch_upsert_allowances(conn, df: pd.DataFrame):
+    """從 DataFrame 批次新增或更新員工常態薪資項。"""
+    cursor = conn.cursor()
+    report = {'inserted': 0, 'updated': 0, 'failed': 0, 'errors': []}
+    
+    # 預先載入映射表
+    emp_map = pd.read_sql("SELECT name_ch, id FROM employee", conn).set_index('name_ch')['id'].to_dict()
+    item_map = pd.read_sql("SELECT name, id FROM salary_item", conn).set_index('name')['id'].to_dict()
+
+    sql = """
+    INSERT INTO employee_salary_item (employee_id, salary_item_id, amount, start_date, end_date, note)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(employee_id, salary_item_id, start_date) DO UPDATE SET
+        amount = excluded.amount,
+        end_date = excluded.end_date,
+        note = excluded.note;
+    """
+    
+    data_to_upsert = []
+    for index, row in df.iterrows():
+        emp_id = emp_map.get(row['name_ch'])
+        item_id = item_map.get(row['item_name'])
+
+        if not emp_id:
+            report['errors'].append({'row': index + 2, 'reason': f"找不到員工 '{row['name_ch']}'"})
+            continue
+        if not item_id:
+            report['errors'].append({'row': index + 2, 'reason': f"找不到薪資項目 '{row['item_name']}'"})
+            continue
+        
+        data_to_upsert.append((
+            emp_id, item_id, row['amount'],
+            row['start_date'], row.get('end_date'), row.get('note')
+        ))
+
+    if data_to_upsert:
+        try:
+            cursor.executemany(sql, data_to_upsert)
+            conn.commit()
+            report['updated'] = cursor.rowcount # SQLite ON CONFLICT 回報受影響行數
+        except Exception as e:
+            conn.rollback()
+            report['errors'].append({'row': 'N/A', 'reason': f'資料庫操作失敗: {e}'})
+    
+    report['failed'] = len(df) - len(data_to_upsert)
+    return report

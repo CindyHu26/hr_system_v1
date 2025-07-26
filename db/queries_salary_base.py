@@ -3,6 +3,7 @@
 資料庫查詢：專門處理員工的「薪資基準(salary_base_history)」，如底薪、眷屬數的歷史紀錄。
 """
 import pandas as pd
+import re
 from utils.helpers import get_monthly_dates
 
 def get_salary_base_history(conn):
@@ -75,8 +76,12 @@ def batch_add_or_update_salary_base_history(conn, df: pd.DataFrame):
     cursor = conn.cursor()
     report = {'inserted': 0, 'updated': 0, 'errors': []}
     
-    # 【修改】預先載入員工姓名映射表
-    emp_map = pd.read_sql("SELECT name_ch, id FROM employee", conn).set_index('name_ch')['id'].to_dict()
+    # --- [核心修改] 建立一個清理過的姓名 -> ID 映射表 ---
+    emp_df_db = pd.read_sql("SELECT name_ch, id FROM employee", conn)
+    # 移除所有空白字元來建立一個穩定的匹配鍵
+    emp_df_db['clean_name'] = emp_df_db['name_ch'].astype(str).str.replace(r'\s+', '', regex=True)
+    emp_map = emp_df_db.set_index('clean_name')['id'].to_dict()
+    # --- 修改結束 ---
 
     sql = """
     INSERT INTO salary_base_history (employee_id, base_salary, insurance_salary, dependents, start_date, end_date, note)
@@ -92,10 +97,14 @@ def batch_add_or_update_salary_base_history(conn, df: pd.DataFrame):
     try:
         data_to_upsert = []
         for index, row in df.iterrows():
-            # 【修改】從姓名取得 emp_id
-            emp_id = emp_map.get(row['name_ch'])
+            # --- [核心修改] 使用清理過的姓名來進行匹配 ---
+            clean_name_excel = re.sub(r'\s+', '', str(row['name_ch']))
+            emp_id = emp_map.get(clean_name_excel)
+            # --- 修改結束 ---
+            
             if not emp_id:
-                report['errors'].append({'row': index + 2, 'reason': f"找不到員工姓名 '{row['name_ch']}'。"})
+                # 使用原始姓名來回報錯誤，方便使用者查找
+                report['errors'].append({'row': row.get('original_index', index + 2), 'reason': f"找不到員工姓名 '{row['name_ch']}'。"})
                 continue
             
             data_to_upsert.append((

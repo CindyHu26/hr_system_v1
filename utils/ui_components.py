@@ -47,14 +47,12 @@ def employee_selector(conn, key_prefix="", pre_selected_ids=None):
 # --- 【升級版通用元件】 ---
 def create_batch_import_section(info_text: str, template_columns: dict, template_file_name: str, import_logic_func, conn):
     """
-    產生一個標準的批次匯入 UI 區塊 (V2)。
-    - 使用 session_state 來保留匯入報告，避免訊息消失。
-    - 提供手動清除報告的按鈕。
+    產生一個標準的批次匯入 UI 區塊 (V3)。
+    - 完整顯示所有錯誤訊息。
+    - 將錯誤訊息放在可滾動的區塊中。
     """
-    # 為每個元件產生一個獨特的 session state key
     session_key = f"import_report_{template_file_name}"
 
-    # 如果 session 中有報告，就顯示它
     if session_key in st.session_state:
         report = st.session_state[session_key]
         st.subheader("匯入結果報告")
@@ -66,22 +64,18 @@ def create_batch_import_section(info_text: str, template_columns: dict, template
 
         if report.get('errors'):
             st.error("部分資料處理失敗，原因如下：")
-            # 顯示前 10 條錯誤，避免洗版
-            for error in report['errors'][:10]:
-                st.write(f"- 第 {error['row']} 行: {error['reason']}")
-            if len(report['errors']) > 10:
-                st.warning(f"...還有 {len(report['errors']) - 10} 筆錯誤未顯示。")
+            # [核心修改] 將錯誤訊息放在一個固定高度且可滾動的容器中
+            with st.container(height=300):
+                for error in report['errors']:
+                    st.write(f"- 第 {error['row']} 行: {error['reason']}")
         
-        # 提供清除按鈕
         if st.button("清除報告並重試", key=f"clear_btn_{template_file_name}"):
             del st.session_state[session_key]
             st.rerun()
-        return # 顯示報告後，下方的上傳元件就先不顯示
+        return
 
-    # --- 以下是尚未有報告時的正常顯示 ---
     st.info(info_text)
 
-    # 1. 產生並提供範本下載
     df_template = pd.DataFrame(columns=template_columns.values())
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -96,18 +90,15 @@ def create_batch_import_section(info_text: str, template_columns: dict, template
 
     st.markdown("---")
     
-    # 2. 檔案上傳
     uploaded_file = st.file_uploader("上傳填寫好的 Excel 檔案", type=['xlsx'], key=f"uploader_{template_file_name}")
 
-    # 3. 執行匯入
     if uploaded_file:
         if st.button("開始匯入", type="primary", key=f"import_btn_{template_file_name}"):
             with st.spinner("正在處理上傳的檔案..."):
                 try:
-                    # 執行匯入邏輯，並將結果存入 session
                     report = import_logic_func(conn, uploaded_file)
                     st.session_state[session_key] = report
-                    st.rerun() # 立即重跑以顯示報告
+                    st.rerun()
 
                 except Exception as e:
                     st.error(f"匯入過程中發生嚴重錯誤：{e}")

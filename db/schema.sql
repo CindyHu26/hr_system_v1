@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS salary_item (
 CREATE TABLE IF NOT EXISTS salary_base_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL, base_salary INTEGER NOT NULL,
     insurance_salary INTEGER, dependents REAL DEFAULT 0, start_date DATE, end_date DATE, note TEXT,
-    FOREIGN KEY(employee_id) REFERENCES employee(id) ON DELETE CASCADE
+    FOREIGN KEY(employee_id) REFERENCES employee(id) ON DELETE CASCADE,
+    UNIQUE(employee_id, start_date)
 );
 
 -- 薪資主紀錄表
@@ -88,10 +89,16 @@ CREATE TABLE IF NOT EXISTS insurance_grade (
 
 -- 員工常態薪資項設定
 CREATE TABLE IF NOT EXISTS employee_salary_item (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL, salary_item_id INTEGER NOT NULL,
-    amount INTEGER NOT NULL, start_date DATE NOT NULL, end_date DATE, note TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    salary_item_id INTEGER NOT NULL,
+    amount INTEGER NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE,
+    note TEXT,
     FOREIGN KEY(employee_id) REFERENCES employee(id) ON DELETE CASCADE,
-    FOREIGN KEY(salary_item_id) REFERENCES salary_item(id) ON DELETE CASCADE
+    FOREIGN KEY(salary_item_id) REFERENCES salary_item(id) ON DELETE CASCADE,
+    UNIQUE(employee_id, salary_item_id, start_date)
 );
 
 -- 每月業務獎金中繼站
