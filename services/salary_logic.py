@@ -53,7 +53,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 def calculate_salary_df(conn, year, month):
     """
     薪資試算引擎：根據各項資料計算全新的薪資草稿。
-    V11: 修正手動健保費的計算邏輯，使其作為基數乘以眷屬數。
+    V12: 修正手動健保費的計算邏輯，確保其作為基數乘以眷屬數。
     """
     TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
 
@@ -121,8 +121,19 @@ def calculate_salary_df(conn, year, month):
                 emp['nhi_status'], emp['nhi_status_expiry'], year, month
             )
             
-            details['勞保費'] = -int(labor_override) if labor_override is not None else -auto_labor_fee
-            details['健保費'] = -int(health_override) if health_override is not None else -auto_health_fee
+            final_labor_fee = int(labor_override) if labor_override is not None else auto_labor_fee
+            
+            if health_override is not None:
+                health_fee_base = int(health_override)
+                dependents_count = float(dependents_under_18 or 0) + float(dependents_over_18 or 0)
+                final_health_fee = int(round(health_fee_base * (1 + dependents_count)))
+                if emp['nhi_status'] == '自理':
+                    final_health_fee = 0
+            else:
+                final_health_fee = auto_health_fee
+
+            details['勞保費'] = -final_labor_fee
+            details['健保費'] = -final_health_fee
             details['勞退提撥(公司負擔)'] = int(pension_override) if pension_override is not None else int(round(insurance_salary * 0.06))
             
         if emp['nationality'] and emp['nationality'] != 'TW':

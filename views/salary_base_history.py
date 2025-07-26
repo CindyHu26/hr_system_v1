@@ -40,32 +40,41 @@ def show_page(conn):
                 fees_labor = []
                 fees_health = []
                 for _, row in history_df_raw.iterrows():
-                    # 取得手動覆蓋值
+                    # 1. 取得手動覆蓋值
                     labor_override = row.get('labor_insurance_override')
                     health_override = row.get('health_insurance_override')
                     has_labor_override = pd.notna(labor_override)
                     has_health_override = pd.notna(health_override)
 
-                    # 執行自動計算，取得勞保費與「健保費基數」
+                    # 2. 執行自動計算，取得勞保費與「健保費基數」
                     start_date = pd.to_datetime(row['start_date'])
-                    auto_labor_fee, auto_health_fee = calculate_single_employee_insurance(
-                        conn,
-                        row['insurance_salary'],
-                        row.get('dependents_under_18', 0),
-                        row.get('dependents_over_18', 0),
-                        row.get('nhi_status', '一般'),
-                        row.get('nhi_status_expiry'),
-                        start_date.year,
-                        start_date.month
+                    # 注意：calculate_single_employee_insurance 回傳的是最終總額，我們需要重新取得基數
+                    _, health_fee_base = q_ins.get_employee_insurance_fee(
+                        conn, row['insurance_salary'], start_date.year, start_date.month
                     )
-                    
-                    # 決定最終費用
+                    auto_labor_fee, auto_health_total = calculate_single_employee_insurance(
+                        conn, row['insurance_salary'],
+                        row.get('dependents_under_18', 0), row.get('dependents_over_18', 0),
+                        row.get('nhi_status', '一般'), row.get('nhi_status_expiry'),
+                        start_date.year, start_date.month
+                    )
+
+                    # 3. 決定勞保費：有手動值就用，沒有就用自動計算值
                     final_labor_fee = int(labor_override) if has_labor_override else auto_labor_fee
-                    
-                    # [核心修改] 直接使用 calculate_single_employee_insurance 回傳的最終健保費
-                    # 因為該函式內部已經處理了所有眷屬和特殊身分的邏輯
-                    final_health_fee = int(health_override) if has_health_override else auto_health_fee
-                                        
+
+                    # 4. 決定健保費
+                    if has_health_override:
+                        # 如果有手動值，則將其視為基數進行計算
+                        final_health_fee_base = int(health_override)
+                        dependents_count = float(row.get('dependents_under_18', 0)) + float(row.get('dependents_over_18', 0))
+                        final_health_fee = int(round(final_health_fee_base * (1 + dependents_count)))
+                        # 如果是自理，健保費應為0
+                        if row.get('nhi_status') == '自理':
+                            final_health_fee = 0
+                    else:
+                        # 如果沒有手動值，直接使用已包含眷屬計算的自動總額
+                        final_health_fee = auto_health_total
+
                     fees_labor.append(final_labor_fee)
                     fees_health.append(final_health_fee)
 
@@ -85,7 +94,7 @@ def show_page(conn):
         except Exception as e:
             st.error(f"讀取歷史紀錄時發生錯誤: {e}")
             history_df_raw = pd.DataFrame()
-            
+
         # --- 新增紀錄 ---
         with st.expander("✨ 新增一筆紀錄"):
             emp_df = q_emp.get_all_employees(conn)

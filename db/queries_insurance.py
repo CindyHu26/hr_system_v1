@@ -55,7 +55,6 @@ def get_employee_insurance_fee(conn, insurance_salary: int, year: int, month: in
     
     return labor_fee, health_fee
 
-
 def get_insurance_grades(conn):
     """取得所有勞健保級距資料。"""
     return pd.read_sql_query("SELECT * FROM insurance_grade ORDER BY start_date DESC, type, grade", conn)
