@@ -47,29 +47,64 @@ def show_page(conn):
     with tab1:
         with st.form("add_employee_form", clear_on_submit=True):
             st.write("請填寫新員工資料 (*為必填)")
+            
+            # --- 基本資料 ---
             c1, c2, c3 = st.columns(3)
-            # ... (其他欄位)
-            nhi_status_add = c1.selectbox("健保狀態", ["一般", "低收入戶", "自理"])
-            nhi_expiry_add = c2.date_input("狀態效期", value=None)
+            name_ch = c1.text_input("姓名*")
+            hr_code = c2.text_input("員工編號*")
+            id_no = c3.text_input("身分證號*")
+            
+            # --- 職務資料 ---
+            c4, c5, c6 = st.columns(3)
+            dept = c4.text_input("部門")
+            title = c5.text_input("職稱")
+            gender = c6.selectbox("性別", ["", "男", "女"])
+            
+            # --- 個人與日期資料 ---
+            c7, c8, c9 = st.columns(3)
+            nationality_ch = c7.selectbox("國籍", list(NATIONALITY_MAP.keys()))
+            birth_date = c8.date_input("生日", value=None)
+            entry_date = c9.date_input("到職日", value=None)
+            
+            # --- 聯絡資訊 ---
+            c10, c11 = st.columns(2)
+            phone = c10.text_input("電話")
+            bank_account = c11.text_input("銀行帳號")
+            address = st.text_input("地址")
+            
+            # --- 特殊身份與日期 ---
+            st.markdown("---")
+            st.markdown("##### 特殊身份與日期")
+            c12, c13, c14 = st.columns(3)
+            arrival_date = c12.date_input("首次抵台日期 (外籍適用)", value=None)
+            resign_date = c13.date_input("離職日", value=None)
+            
+            # --- 健保相關 ---
+            st.markdown("---")
+            st.markdown("##### 健保相關設定")
+            c15, c16 = st.columns(2)
+            nhi_status = c15.selectbox("健保狀態", ["一般", "低收入戶", "自理"])
+            nhi_status_expiry = c16.date_input("狀態效期", value=None)
 
-            new_data = {
-                'name_ch': c1.text_input("姓名*"), 'hr_code': c2.text_input("員工編號*"),
-                'id_no': c3.text_input("身分證號*"), 'dept': c1.text_input("部門"),
-                'title': c2.text_input("職稱"), 'gender': c3.selectbox("性別", ["", "男", "女"]),
-                'nationality': NATIONALITY_MAP[c1.selectbox("國籍", list(NATIONALITY_MAP.keys()))],
-                'arrival_date': c2.date_input("首次抵台日期", value=None), 'entry_date': c3.date_input("到職日", value=None),
-                'birth_date': c1.date_input("生日", value=None), 'resign_date': c2.date_input("離職日", value=None),
-                'phone': c3.text_input("電話"), 'address': st.text_input("地址"),
-                'bank_account': st.text_input("銀行帳號"), 'note': st.text_area("備註"),
-                'nhi_status': nhi_status_add,
-                'nhi_status_expiry': nhi_expiry_add
-            }
+            note = st.text_area("備註")
 
+            # --- 表單提交按鈕 ---
             if st.form_submit_button("確認新增"):
-                if not all([new_data['name_ch'], new_data['hr_code'], new_data['id_no']]):
+                if not all([name_ch, hr_code, id_no]):
                     st.error("姓名、員工編號、身分證號為必填欄位！")
                 else:
+                    new_data = {
+                        'name_ch': name_ch, 'hr_code': hr_code, 'id_no': id_no,
+                        'dept': dept, 'title': title, 'gender': gender,
+                        'nationality': NATIONALITY_MAP[nationality_ch],
+                        'birth_date': birth_date, 'entry_date': entry_date,
+                        'phone': phone, 'bank_account': bank_account, 'address': address,
+                        'arrival_date': arrival_date, 'resign_date': resign_date,
+                        'nhi_status': nhi_status, 'nhi_status_expiry': nhi_status_expiry,
+                        'note': note
+                    }
                     try:
+                        # 清理空值，確保資料庫儲存的是 NULL 而不是空字串
                         cleaned_data = {k: (v if v else None) for k, v in new_data.items()}
                         q_common.add_record(conn, 'employee', cleaned_data)
                         st.success(f"成功新增員工：{new_data['name_ch']}")

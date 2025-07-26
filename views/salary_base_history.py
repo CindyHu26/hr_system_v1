@@ -103,7 +103,7 @@ def show_page(conn):
                     start_date.year,
                     start_date.month
                 )
-                fees.append(fee)
+                fees.append(sum(fee))
             history_df_raw['當期勞健保費'] = fees
 
         history_df_display = history_df_raw.rename(columns={
