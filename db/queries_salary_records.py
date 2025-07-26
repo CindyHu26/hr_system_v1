@@ -204,3 +204,57 @@ def get_cumulative_bonus_for_year(conn, employee_id: int, year: int, bonus_item_
     
     # 因為扣款是負數，所以要取絕對值
     return cumulative_bonus, abs(deducted_premium)
+
+def update_salary_preview_data(conn, year: int, month: int, df_to_update: pd.DataFrame):
+    """
+    接收從薪資基礎審核頁面編輯後的 DataFrame，並更新對應的薪資紀錄。
+    """
+    if df_to_update.empty:
+        return 0
+        
+    cursor = conn.cursor()
+    
+    # 預先獲取 salary_id 和 salary_item_id 的映射
+    salary_id_map = pd.read_sql("SELECT id, employee_id FROM salary WHERE year = ? AND month = ?", conn, params=(year, month)).set_index('employee_id')['id'].to_dict()
+    item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
+    
+    # 獲取需要更新的薪資項目 ID
+    base_salary_id = item_map.get('底薪')
+    labor_fee_id = item_map.get('勞保費')
+    health_fee_id = item_map.get('健保費')
+
+    updates_for_details = [] # 用於 salary_detail 的更新
+    updates_for_pension = [] # 用於 salary 主表的更新
+    
+    for _, row in df_to_update.iterrows():
+        emp_id = row['employee_id']
+        salary_id = salary_id_map.get(emp_id)
+        if not salary_id:
+            continue
+        
+        # 準備 salary_detail 的更新資料
+        if base_salary_id: updates_for_details.append((row['底薪'], salary_id, base_salary_id))
+        if labor_fee_id: updates_for_details.append((row['勞保費'], salary_id, labor_fee_id))
+        if health_fee_id: updates_for_details.append((row['健保費'], salary_id, health_fee_id))
+        
+        # 準備 salary 主表的更新資料
+        updates_for_pension.append((row['勞退提撥(公司負擔)'], salary_id))
+
+    try:
+        # 使用 ON CONFLICT 語法一次性更新或插入 salary_detail
+        detail_sql = """
+        INSERT INTO salary_detail (amount, salary_id, salary_item_id) VALUES (?, ?, ?)
+        ON CONFLICT(salary_id, salary_item_id) DO UPDATE SET amount = excluded.amount;
+        """
+        cursor.executemany(detail_sql, updates_for_details)
+        
+        # 逐筆更新 salary 主表的勞退提撥
+        pension_sql = "UPDATE salary SET employer_pension_contribution = ? WHERE id = ?"
+        cursor.executemany(pension_sql, updates_for_pension)
+        
+        conn.commit()
+        return len(df_to_update) # 回傳成功更新的員工人數
+        
+    except Exception as e:
+        conn.rollback()
+        raise e

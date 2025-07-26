@@ -76,3 +76,24 @@ def generate_nhi_employer_summary(conn, year: int):
         summary_df = pd.concat([summary_df, total_row], ignore_index=True)
         
     return summary_df
+
+def get_salary_preview_data(conn, year: int, month: int):
+    """為薪資基礎審核頁面準備資料。"""
+    
+    # 1. 取得當月薪資單的 DataFrame
+    report_df, _ = q_records.get_salary_report_for_editing(conn, year, month)
+    if report_df.empty:
+        return pd.DataFrame()
+        
+    # 2. 篩選出需要的欄位
+    preview_cols = [
+        'employee_id', '員工姓名', '底薪', 
+        '勞保費', '健保費', '勞退提撥(公司負擔)'
+    ]
+    
+    # 確保所有欄位都存在，如果不存在則補 0
+    for col in preview_cols:
+        if col not in report_df.columns:
+            report_df[col] = 0
+            
+    return report_df[preview_cols]

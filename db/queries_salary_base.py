@@ -57,6 +57,7 @@ def batch_update_base_salary(conn, preview_df: pd.DataFrame, new_wage: int, effe
     """根據預覽 DataFrame，為指定員工批次新增一筆調薪紀錄。"""
     cursor = conn.cursor()
     try:
+        # [核心修改] 更新資料元組，使其對應新的眷屬欄位
         data_to_insert = [
             (
                 row['employee_id'], new_wage, new_wage, 
@@ -66,6 +67,7 @@ def batch_update_base_salary(conn, preview_df: pd.DataFrame, new_wage: int, effe
             )
             for _, row in preview_df.iterrows()
         ]
+        # [核心修改] 更新 INSERT 語句中的欄位列表
         sql = """
         INSERT INTO salary_base_history 
             (employee_id, base_salary, insurance_salary, dependents_under_18, dependents_over_18, start_date, end_date, note) 
@@ -97,7 +99,6 @@ def batch_add_or_update_salary_base_history(conn, df: pd.DataFrame):
     emp_df_db['clean_name'] = emp_df_db['name_ch'].astype(str).str.replace(r'\s+', '', regex=True)
     emp_map = emp_df_db.set_index('clean_name')['id'].to_dict()
 
-    # [核心修改] 更新 SQL 語句以匹配所有欄位
     sql = """
     INSERT INTO salary_base_history 
         (employee_id, base_salary, insurance_salary, dependents_under_18, dependents_over_18, 
@@ -126,7 +127,6 @@ def batch_add_or_update_salary_base_history(conn, df: pd.DataFrame):
                 report['errors'].append({'row': row.get('original_index', index + 2), 'reason': f"找不到員工姓名 '{row['name_ch']}'。"})
                 continue
             
-            # [核心修改] 確保使用新的眷屬欄位和手動調整欄位
             data_to_upsert.append((
                 emp_id, row['base_salary'], row['insurance_salary'], 
                 row['dependents_under_18'], row['dependents_over_18'],

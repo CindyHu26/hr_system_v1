@@ -13,8 +13,8 @@ from views import (
     insurance_grade_management, 
     salary_base_history,
     allowance_setting,          
-    bonus_batch,                
-    salary_calculation,
+    bonus_batch,    
+    salary_calculation,            
     salary_review,
     annual_summary,             
     nhi_summary,                
@@ -50,7 +50,9 @@ PAGES_SALARY = {
     "📈 薪資基準管理": salary_base_history,
     "➕ 員工常態薪資項設定": allowance_setting,
     "🌀 業務獎金批次匯入": bonus_batch,
-    "💵 薪資單產生與管理": salary_calculation,
+    "1️⃣ 薪資草稿產生": salary_calculation,
+    "2️⃣ 薪資基礎審核": salary_review,
+    "3️⃣ 薪資單總覽與鎖定": salary_calculation,
 }
 PAGES_REPORTING = {
     "📊 年度薪資總表": annual_summary,
