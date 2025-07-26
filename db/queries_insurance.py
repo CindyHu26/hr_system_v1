@@ -6,8 +6,6 @@
 import pandas as pd
 from utils.helpers import get_monthly_dates
 
-# --- Employee Insurance History ---
-
 def get_all_insurance_history(conn):
     """取得所有員工的加退保歷史紀錄。"""
     query = """
@@ -23,7 +21,7 @@ def get_all_insurance_history(conn):
 def get_employee_insurance_fee(conn, insurance_salary: int, year: int, month: int):
     """
     根據投保薪資、年份和月份，查詢員工應負擔的勞健保費用。
-    V3: 導入版本化查詢，確保使用正確生效日期的級距表。
+    V4: 最終修正版，採用更穩健的單一原子化查詢邏輯。
     """
     if not insurance_salary or insurance_salary <= 0:
         return 0, 0
@@ -32,28 +30,27 @@ def get_employee_insurance_fee(conn, insurance_salary: int, year: int, month: in
     month_end_date = get_monthly_dates(year, month)[1]
 
     def get_fee_by_type(ins_type: str):
-        # 步驟 1: 找出當前月份應該適用的、最新的級距表生效日期
-        date_query = "SELECT MAX(start_date) FROM insurance_grade WHERE type = ? AND start_date <= ?"
-        effective_date_row = cursor.execute(date_query, (ins_type, month_end_date)).fetchone()
-        if not effective_date_row or not effective_date_row[0]:
-            return 0 # 如果找不到任何有效的級距表版本，返回0
-
-        effective_date = effective_date_row[0]
-
-        # 步驟 2: 在該生效日期的版本中，找出最高級距金額
-        max_salary_query = "SELECT MAX(salary_max) FROM insurance_grade WHERE type = ? AND start_date = ?"
-        max_salary_row = cursor.execute(max_salary_query, (ins_type, effective_date)).fetchone()
-        max_salary = max_salary_row[0] if max_salary_row and max_salary_row[0] else 0
-
-        # 步驟 3: 決定用於查詢的薪資 (若超過上限，則使用上限值)
-        lookup_salary = min(insurance_salary, max_salary) if max_salary > 0 else insurance_salary
-
-        # 步驟 4: 在正確的版本中，用正確的薪資查詢費用
-        fee_query = """
-        SELECT employee_fee FROM insurance_grade 
-        WHERE type = ? AND start_date = ? AND ? BETWEEN salary_min AND salary_max
+        # [核心修改] 將多個查詢合併為一個，從根本上解決問題
+        query = """
+        SELECT g.employee_fee
+        FROM insurance_grade g
+        WHERE g.type = ?
+          -- 條件1: 找出所有生效日期早於等於計算月份的級距表
+          AND g.start_date = (
+              SELECT MAX(start_date) 
+              FROM insurance_grade 
+              WHERE type = ? AND start_date <= ?
+          )
+          -- 條件2: 員工薪資需落在級距範圍內，或超過最高級距時採用最高級距
+          AND (
+              ? BETWEEN g.salary_min AND g.salary_max
+              OR 
+              g.grade = (SELECT MAX(grade) FROM insurance_grade WHERE type = ? AND start_date = g.start_date) AND ? > g.salary_max
+          )
+        LIMIT 1;
         """
-        fee_row = cursor.execute(fee_query, (ins_type, effective_date, lookup_salary)).fetchone()
+        params = (ins_type, ins_type, month_end_date, insurance_salary, ins_type, insurance_salary)
+        fee_row = cursor.execute(query, params).fetchone()
         
         return fee_row[0] if fee_row else 0
 
@@ -102,7 +99,6 @@ def batch_insert_or_replace_grades(conn, df: pd.DataFrame, grade_type: str, star
         conn.rollback()
         raise e
     
-# 批次新增或更新員工加保紀錄
 def batch_add_or_update_insurance_history(conn, df: pd.DataFrame):
     cursor = conn.cursor()
     report = {'inserted': 0, 'updated': 0, 'errors': []}
