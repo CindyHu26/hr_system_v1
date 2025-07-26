@@ -20,13 +20,46 @@ def show_page(conn):
 
     try:
         df_raw = q_common.get_all(conn, 'company', order_by='name')
-        st.dataframe(df_raw.rename(columns=COLUMN_MAP))
+        
+        # [核心修改] 將 dataframe 改為 data_editor
+        st.info("您可以直接在下表中修改資料，完成後點擊表格下方的「儲存變更」按鈕。")
+        
+        df_raw.set_index('id', inplace=True)
+        
+        if 'original_company_df' not in st.session_state:
+            st.session_state.original_company_df = df_raw.copy()
+
+        edited_df = st.data_editor(
+            df_raw.rename(columns=COLUMN_MAP),
+            use_container_width=True,
+            disabled=["統一編號"] # 統一編號通常不變，設為不可編輯
+        )
+        
+        if st.button("💾 儲存公司資料變更", type="primary"):
+            original_df_renamed = st.session_state.original_company_df.rename(columns=COLUMN_MAP)
+            changes = edited_df.compare(original_df_renamed)
+            
+            if changes.empty:
+                st.info("沒有偵測到任何變更。")
+            else:
+                updates_count = 0
+                with st.spinner("正在儲存變更..."):
+                    edited_df_reverted = edited_df.rename(columns={v: k for k, v in COLUMN_MAP.items()})
+                    for record_id, row in edited_df_reverted.iterrows():
+                        original_row = st.session_state.original_company_df.loc[record_id]
+                        if not row.equals(original_row):
+                            q_common.update_record(conn, 'company', record_id, row.to_dict())
+                            updates_count += 1
+                st.success(f"成功更新了 {updates_count} 筆公司資料！")
+                del st.session_state.original_company_df
+                st.rerun()
+
     except Exception as e:
         st.error(f"讀取公司資料時發生錯誤: {e}")
         return
 
     st.subheader("資料操作")
-    tab1, tab2, tab3 = st.tabs(["新增公司", "修改/刪除公司", "🚀 批次匯入 (Excel)"])
+    tab1, tab2 = st.tabs(["新增公司", "🚀 批次匯入 (Excel)"]) # [修改] 簡化頁籤
 
     with tab1:
         with st.form("add_company_form", clear_on_submit=True):
@@ -48,50 +81,8 @@ def show_page(conn):
                         st.rerun()
                     except Exception as e:
                         st.error(f"新增公司時發生錯誤：{e}")
-    
+
     with tab2:
-        if not df_raw.empty:
-            options = {f"{row['name']} ({row['uniform_no']})": row['id'] for _, row in df_raw.iterrows()}
-            selected_key = st.selectbox("選擇要操作的公司", options.keys(), index=None, placeholder="請選擇一間公司...")
-            
-            if selected_key:
-                selected_id = options[selected_key]
-                comp_data = q_common.get_by_id(conn, 'company', selected_id)
-
-                with st.form(f"update_company_{selected_id}"):
-                    st.write(f"### 正在編輯: {comp_data['name']}")
-                    c1, c2 = st.columns(2)
-                    updated_data = {
-                        'name': c1.text_input("公司名稱*", value=comp_data.get('name', '')),
-                        'uniform_no': c2.text_input("統一編號", value=comp_data.get('uniform_no', '') or ''),
-                        'owner': c1.text_input("負責人", value=comp_data.get('owner', '') or ''),
-                        'ins_code': c2.text_input("投保代號", value=comp_data.get('ins_code', '') or ''),
-                        'address': st.text_input("地址", value=comp_data.get('address', '') or ''),
-                        'note': st.text_area("備註", value=comp_data.get('note', '') or '')
-                    }
-                    
-                    c_update, c_delete = st.columns(2)
-                    if c_update.form_submit_button("儲存變更", use_container_width=True):
-                        if not updated_data['name']:
-                            st.error("公司名稱為必填欄位！")
-                        else:
-                            try:
-                                cleaned_data = {k: (v if v else None) for k, v in updated_data.items()}
-                                q_common.update_record(conn, 'company', selected_id, cleaned_data)
-                                st.success(f"成功更新公司 {updated_data['name']} 的資料！")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"更新時發生錯誤：{e}")
-
-                    if c_delete.form_submit_button("🔴 刪除此公司", use_container_width=True, type="primary"):
-                        try:
-                            q_common.delete_record(conn, 'company', selected_id)
-                            st.success(f"已成功刪除公司 {comp_data['name']}。")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"刪除失敗：{e} (該公司可能仍有關聯的員工加保紀錄)")
-    with tab3:
-        # 【新增】直接呼叫通用元件
         create_batch_import_section(
             info_text="說明：請下載範本，填寫公司資料後上傳。系統會以「統一編號」為唯一鍵進行新增或更新。",
             template_columns=COMPANY_TEMPLATE_COLUMNS,
