@@ -20,35 +20,45 @@ def get_all_insurance_history(conn):
     """
     return pd.read_sql_query(query, conn)
 
-def get_employee_insurance_fee(conn, insurance_salary):
-    """根據投保薪資查詢員工應負擔的勞健保費用。"""
+def get_employee_insurance_fee(conn, insurance_salary: int, year: int, month: int):
+    """
+    根據投保薪資、年份和月份，查詢員工應負擔的勞健保費用。
+    V3: 導入版本化查詢，確保使用正確生效日期的級距表。
+    """
     if not insurance_salary or insurance_salary <= 0:
         return 0, 0
         
     cursor = conn.cursor()
-    
-    # --- [核心修改] 處理薪資超過投保上限的情況 ---
-    # 1. 取得勞保的最高投保薪資
-    max_labor_salary_row = cursor.execute("SELECT MAX(salary_max) FROM insurance_grade WHERE type = 'labor'").fetchone()
-    max_labor_salary = max_labor_salary_row[0] if max_labor_salary_row and max_labor_salary_row[0] else 45800
+    month_end_date = get_monthly_dates(year, month)[1]
 
-    # 2. 取得健保的最高投保薪資
-    max_health_salary_row = cursor.execute("SELECT MAX(salary_max) FROM insurance_grade WHERE type = 'health'").fetchone()
-    max_health_salary = max_health_salary_row[0] if max_health_salary_row and max_health_salary_row[0] else 219500
+    def get_fee_by_type(ins_type: str):
+        # 步驟 1: 找出當前月份應該適用的、最新的級距表生效日期
+        date_query = "SELECT MAX(start_date) FROM insurance_grade WHERE type = ? AND start_date <= ?"
+        effective_date_row = cursor.execute(date_query, (ins_type, month_end_date)).fetchone()
+        if not effective_date_row or not effective_date_row[0]:
+            return 0 # 如果找不到任何有效的級距表版本，返回0
 
-    # 3. 決定用於查詢的薪資 (取員工薪資和各保險上限中較小的值)
-    salary_for_labor_lookup = min(insurance_salary, max_labor_salary)
-    salary_for_health_lookup = min(insurance_salary, max_health_salary)
-    
-    # 4. 使用處理過的薪資來查詢費用
-    sql_labor = "SELECT employee_fee FROM insurance_grade WHERE type = 'labor' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
-    labor_fee_row = cursor.execute(sql_labor, (salary_for_labor_lookup,)).fetchone()
-    
-    sql_health = "SELECT employee_fee FROM insurance_grade WHERE type = 'health' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
-    health_fee_row = cursor.execute(sql_health, (salary_for_health_lookup,)).fetchone()
-    
-    labor_fee = labor_fee_row[0] if labor_fee_row else 0
-    health_fee = health_fee_row[0] if health_fee_row else 0
+        effective_date = effective_date_row[0]
+
+        # 步驟 2: 在該生效日期的版本中，找出最高級距金額
+        max_salary_query = "SELECT MAX(salary_max) FROM insurance_grade WHERE type = ? AND start_date = ?"
+        max_salary_row = cursor.execute(max_salary_query, (ins_type, effective_date)).fetchone()
+        max_salary = max_salary_row[0] if max_salary_row and max_salary_row[0] else 0
+
+        # 步驟 3: 決定用於查詢的薪資 (若超過上限，則使用上限值)
+        lookup_salary = min(insurance_salary, max_salary) if max_salary > 0 else insurance_salary
+
+        # 步驟 4: 在正確的版本中，用正確的薪資查詢費用
+        fee_query = """
+        SELECT employee_fee FROM insurance_grade 
+        WHERE type = ? AND start_date = ? AND ? BETWEEN salary_min AND salary_max
+        """
+        fee_row = cursor.execute(fee_query, (ins_type, effective_date, lookup_salary)).fetchone()
+        
+        return fee_row[0] if fee_row else 0
+
+    labor_fee = get_fee_by_type('labor')
+    health_fee = get_fee_by_type('health')
     
     return labor_fee, health_fee
 

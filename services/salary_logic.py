@@ -19,7 +19,8 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
     if not insurance_salary or insurance_salary <= 0:
         return 0, 0
 
-    labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary)
+    # [核心修改] 將年份和月份傳遞給查詢函式
+    labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary, year, month)
     total_health_fee = 0
     
     is_expired = pd.to_datetime(nhi_status_expiry).date() < date(year, month, 1) if pd.notna(nhi_status_expiry) else False
