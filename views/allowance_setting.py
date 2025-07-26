@@ -11,18 +11,79 @@ from services import allowance_logic as logic_allow
 
 def show_page(conn):
     st.header("➕ 員工常態薪資項設定")
-    st.info("您可以在此批次新增、批次匯入、或單獨編輯員工固定的津貼/扣款項目。")
+    st.info("您可以在此總覽與快速修改現有設定，或透過批次功能進行大量新增。")
 
-    try:
-        all_settings_df = q_allow.get_all_employee_salary_items(conn)
-    except Exception as e:
-        st.error(f"讀取設定總覽時發生錯誤: {e}")
-        all_settings_df = pd.DataFrame()
+    # [核心修改] 建立新的三頁籤結構
+    tab1, tab2, tab3 = st.tabs(["📖 總覽與快速修改", "✨ 批次新增設定", "🚀 批次匯入 (Excel)"])
 
-    # 建立三個頁籤，這將正確定義 tab1, tab2, tab3
-    tab1, tab2, tab3 = st.tabs([" ✨ 批次新增設定", "📖 所有設定總覽", "🚀 批次匯入 (Excel)"])
-
+    # --- TAB 1: 總覽與快速修改 (新功能) ---
     with tab1:
+        st.subheader("常態薪資項總覽 (可直接修改)")
+        try:
+            # 1. 獲取原始的長表資料
+            long_df = q_allow.get_all_employee_salary_items(conn)
+
+            if not long_df.empty:
+                # 2. 建立一個 (員工ID, 項目名稱) -> 紀錄ID 的查詢字典，供後續更新使用
+                id_mapper = {
+                    (row['employee_id'], row['項目名稱']): row['id']
+                    for _, row in long_df.iterrows()
+                }
+
+                # 3. 使用 pivot_table 將長表轉為寬表
+                wide_df = long_df.pivot_table(
+                    index=['employee_id', '員工姓名'],
+                    columns='項目名稱',
+                    values='金額'
+                ).reset_index()
+                
+                # 將 employee_id 設為索引，方便後續操作，但不在表格中顯示
+                wide_df.set_index('employee_id', inplace=True)
+
+                # 儲存原始資料以供比對
+                if 'original_allowance_df' not in st.session_state:
+                    st.session_state.original_allowance_df = wide_df.copy()
+
+                # 4. 使用 data_editor 顯示可編輯的表格
+                st.caption("您可以直接在下表中修改金額。修改後請點擊下方的「儲存變更」按鈕。")
+                edited_df = st.data_editor(wide_df, use_container_width=True)
+
+                # 5. 儲存變更的邏輯
+                if st.button("💾 儲存變更", type="primary"):
+                    original_df = st.session_state.original_allowance_df
+                    # 找出被修改過的儲存格
+                    changes = edited_df.compare(original_df)
+                    
+                    if changes.empty:
+                        st.info("沒有偵測到任何變更。")
+                    else:
+                        updates_count = 0
+                        with st.spinner("正在儲存變更..."):
+                            # 遍歷所有被修改的儲存格
+                            for (emp_id, emp_name), row in changes.iterrows():
+                                for item_name, values in row.items():
+                                    # `compare` 會顯示 self (修改後) 和 other (修改前)
+                                    old_val, new_val = values['other'], values['self']
+                                    if pd.notna(new_val): # 只處理有新值的
+                                        record_id = id_mapper.get((emp_id, item_name))
+                                        if record_id:
+                                            q_common.update_record(conn, 'employee_salary_item', record_id, {'amount': new_val})
+                                            updates_count += 1
+                        
+                        st.success(f"成功更新了 {updates_count} 筆設定！")
+                        # 清除 session state 以便下次重新載入
+                        del st.session_state.original_allowance_df
+                        st.rerun()
+
+            else:
+                st.info("目前沒有任何常態薪資項設定。")
+
+        except Exception as e:
+            st.error(f"載入總覽頁面時發生錯誤: {e}")
+
+
+    # --- TAB 2: 批次新增設定 (保留舊功能) ---
+    with tab2:
         st.subheader("批次新增設定")
         st.markdown("為一群員工 **新增** 一個新的常態薪資項目。如果員工已存在該項目，原設定將被覆蓋。")
         try:
@@ -62,28 +123,7 @@ def show_page(conn):
         except Exception as e:
             st.error(f"載入新增表單時發生錯誤: {e}")
 
-    with tab2:
-        st.subheader("目前所有常態設定總覽")
-        if not all_settings_df.empty:
-            st.dataframe(all_settings_df, use_container_width=True)
-            
-            with st.expander("🗑️ 刪除單筆設定"):
-                options_to_delete = {
-                    f"ID:{row['id']} - {row['員工姓名']} - {row['項目名稱']} ({row['金額']})": row['id']
-                    for _, row in all_settings_df.iterrows()
-                }
-                selected_key = st.selectbox("選擇要刪除的紀錄", options=options_to_delete.keys(), key="delete_select", index=None)
-                if st.button("確認刪除選定紀錄", type="primary", key="delete_button"):
-                    if selected_key:
-                        record_id_to_delete = options_to_delete[selected_key]
-                        q_common.delete_record(conn, 'employee_salary_item', record_id_to_delete)
-                        st.success(f"紀錄 ID:{record_id_to_delete} 已成功刪除！")
-                        st.rerun()
-                    else:
-                        st.warning("請先選擇一筆要刪除的紀錄。")
-        else:
-            st.info("目前沒有任何常態薪資項設定。")
-
+    # --- TAB 3: 批次匯入 (Excel) (保留舊功能) ---
     with tab3:
         create_batch_import_section(
             info_text="說明：系統會以「員工姓名 + 項目名稱 + 生效日」為唯一鍵，若紀錄已存在則會更新，否則新增。",
