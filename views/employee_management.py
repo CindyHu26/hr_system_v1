@@ -17,14 +17,15 @@ COLUMN_MAP = {
     'hr_code': '員工編號', 'gender': '性別', 'birth_date': '生日', 'nationality': '國籍',
     'arrival_date': '首次抵台日', 'phone': '電話', 'address': '地址', 'dept': '部門',
     'title': '職稱', 'resign_date': '離職日', 'bank_account': '銀行帳號', 'note': '備註',
-    'nhi_status': '健保狀態', 'nhi_status_expiry': '狀態效期' # 新增
+    'nhi_status': '健保狀態', 'nhi_status_expiry': '健保狀態效期' # 新增
 }
 
 TEMPLATE_COLUMNS = {
     'name_ch': '姓名*', 'id_no': '身分證號*', 'hr_code': '員工編號*', 'entry_date': '到職日(YYYY-MM-DD)',
     'gender': '性別(男/女)', 'birth_date': '生日(YYYY-MM-DD)', 'nationality': '國籍(台灣/泰國...)',
     'arrival_date': '首次抵台日(YYYY-MM-DD)', 'phone': '電話', 'address': '地址', 'dept': '部門',
-    'title': '職稱', 'resign_date': '離職日(YYYY-MM-DD)', 'bank_account': '銀行帳號', 'note': '備註'
+    'title': '職稱', 'resign_date': '離職日(YYYY-MM-DD)', 'bank_account': '銀行帳號', 'note': '備註',
+    'nhi_status': '健保狀態(一般/低收入戶/自理)', 'nhi_status_expiry': '健保狀態效期(YYYY-MM-DD)' # [新增]
 }
 
 def show_page(conn):
