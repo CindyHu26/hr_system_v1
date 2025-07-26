@@ -104,13 +104,17 @@ def calculate_salary_df(conn, year, month):
             details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
 
         if insurance_salary > 0:
+            print(f"  [DEBUG] 準備呼叫 calculate_single_employee_insurance，傳入 insurance_salary: {insurance_salary}")
             labor_fee, health_fee = calculate_single_employee_insurance(
                 conn, insurance_salary, dependents_under_18, dependents_over_18,
                 emp['nhi_status'], emp['nhi_status_expiry'], year, month
             )
+            print(f"  [DEBUG] calculate_single_employee_insurance 回傳 -> labor_fee: {labor_fee}, health_fee: {health_fee}")
             details['勞保費'] = -int(labor_override) if labor_override is not None else -labor_fee
             details['健保費'] = -int(health_override) if health_override is not None else -health_fee
             details['勞退提撥(公司負擔)'] = int(pension_override) if pension_override is not None else int(round(insurance_salary * 0.06))
+        else:
+            print("  [DEBUG] insurance_salary 為 0，跳過保險計算。")
             
         if emp['nationality'] and emp['nationality'] != 'TW':
             entry_date = datetime.strptime(emp['entry_date'], '%Y-%m-%d').date()

@@ -78,22 +78,43 @@ def generate_nhi_employer_summary(conn, year: int):
     return summary_df
 
 def get_salary_preview_data(conn, year: int, month: int):
-    """為薪資基礎審核頁面準備資料。"""
+    """為薪資基礎審核頁面準備資料。(V2: 使用獨立查詢，與總表脫鉤)"""
     
-    # 1. 取得當月薪資單的 DataFrame
-    report_df, _ = q_records.get_salary_report_for_editing(conn, year, month)
-    if report_df.empty:
+    # 1. 直接查詢當月的薪資主表和明細表
+    query = """
+    SELECT 
+        s.employee_id,
+        e.name_ch as '員工姓名',
+        si.name as item_name,
+        sd.amount,
+        s.employer_pension_contribution as '勞退提撥(公司負擔)'
+    FROM salary_detail sd
+    JOIN salary s ON sd.salary_id = s.id
+    JOIN salary_item si ON sd.salary_item_id = si.id
+    JOIN employee e ON s.employee_id = e.id
+    WHERE s.year = ? 
+      AND s.month = ?
+      AND si.name IN ('底薪', '勞保費', '健保費')
+    """
+    df_raw = pd.read_sql_query(query, conn, params=(year, month))
+
+    if df_raw.empty:
         return pd.DataFrame()
         
-    # 2. 篩選出需要的欄位
+    # 2. 將長格式資料轉換為寬格式（每個員工一行）
+    preview_df = df_raw.pivot_table(
+        index=['employee_id', '員工姓名', '勞退提撥(公司負擔)'], 
+        columns='item_name', 
+        values='amount'
+    ).reset_index()
+
+    # 3. 確保所有需要的欄位都存在，若無則補 0
     preview_cols = [
         'employee_id', '員工姓名', '底薪', 
         '勞保費', '健保費', '勞退提撥(公司負擔)'
     ]
-    
-    # 確保所有欄位都存在，如果不存在則補 0
     for col in preview_cols:
-        if col not in report_df.columns:
-            report_df[col] = 0
+        if col not in preview_df.columns:
+            preview_df[col] = 0
             
-    return report_df[preview_cols]
+    return preview_df[preview_cols]
