@@ -24,23 +24,28 @@ def get_employee_insurance_fee(conn, insurance_salary):
     """根據投保薪資查詢員工應負擔的勞健保費用。"""
     if not insurance_salary or insurance_salary <= 0:
         return 0, 0
+        
+    cursor = conn.cursor()
     
-    # --- [核心修改] 處理薪資超過勞保上限的情況 ---
+    # --- [核心修改] 處理薪資超過投保上限的情況 ---
     # 1. 取得勞保的最高投保薪資
-    max_labor_salary_row = conn.execute("SELECT MAX(salary_max) FROM insurance_grade WHERE type = 'labor'").fetchone()
-    # 如果資料庫是空的，給一個預設的已知上限
+    max_labor_salary_row = cursor.execute("SELECT MAX(salary_max) FROM insurance_grade WHERE type = 'labor'").fetchone()
     max_labor_salary = max_labor_salary_row[0] if max_labor_salary_row and max_labor_salary_row[0] else 45800
 
-    # 2. 決定用於查詢勞保費的薪資 (取員工薪資和勞保上限中較小的值)
+    # 2. 取得健保的最高投保薪資
+    max_health_salary_row = cursor.execute("SELECT MAX(salary_max) FROM insurance_grade WHERE type = 'health'").fetchone()
+    max_health_salary = max_health_salary_row[0] if max_health_salary_row and max_health_salary_row[0] else 219500
+
+    # 3. 決定用於查詢的薪資 (取員工薪資和各保險上限中較小的值)
     salary_for_labor_lookup = min(insurance_salary, max_labor_salary)
+    salary_for_health_lookup = min(insurance_salary, max_health_salary)
     
-    # 3. 使用處理過的薪資來查詢勞保費
+    # 4. 使用處理過的薪資來查詢費用
     sql_labor = "SELECT employee_fee FROM insurance_grade WHERE type = 'labor' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
-    labor_fee_row = conn.execute(sql_labor, (salary_for_labor_lookup,)).fetchone()
+    labor_fee_row = cursor.execute(sql_labor, (salary_for_labor_lookup,)).fetchone()
     
-    # 健保費查詢維持不變，因為其上限較高
     sql_health = "SELECT employee_fee FROM insurance_grade WHERE type = 'health' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
-    health_fee_row = conn.execute(sql_health, (insurance_salary,)).fetchone()
+    health_fee_row = cursor.execute(sql_health, (salary_for_health_lookup,)).fetchone()
     
     labor_fee = labor_fee_row[0] if labor_fee_row else 0
     health_fee = health_fee_row[0] if health_fee_row else 0
