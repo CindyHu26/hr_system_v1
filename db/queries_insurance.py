@@ -24,10 +24,21 @@ def get_employee_insurance_fee(conn, insurance_salary):
     """根據投保薪資查詢員工應負擔的勞健保費用。"""
     if not insurance_salary or insurance_salary <= 0:
         return 0, 0
-        
-    sql_labor = "SELECT employee_fee FROM insurance_grade WHERE type = 'labor' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
-    labor_fee_row = conn.execute(sql_labor, (insurance_salary,)).fetchone()
     
+    # --- [核心修改] 處理薪資超過勞保上限的情況 ---
+    # 1. 取得勞保的最高投保薪資
+    max_labor_salary_row = conn.execute("SELECT MAX(salary_max) FROM insurance_grade WHERE type = 'labor'").fetchone()
+    # 如果資料庫是空的，給一個預設的已知上限
+    max_labor_salary = max_labor_salary_row[0] if max_labor_salary_row and max_labor_salary_row[0] else 45800
+
+    # 2. 決定用於查詢勞保費的薪資 (取員工薪資和勞保上限中較小的值)
+    salary_for_labor_lookup = min(insurance_salary, max_labor_salary)
+    
+    # 3. 使用處理過的薪資來查詢勞保費
+    sql_labor = "SELECT employee_fee FROM insurance_grade WHERE type = 'labor' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
+    labor_fee_row = conn.execute(sql_labor, (salary_for_labor_lookup,)).fetchone()
+    
+    # 健保費查詢維持不變，因為其上限較高
     sql_health = "SELECT employee_fee FROM insurance_grade WHERE type = 'health' AND ? BETWEEN salary_min AND salary_max ORDER BY start_date DESC LIMIT 1"
     health_fee_row = conn.execute(sql_health, (insurance_salary,)).fetchone()
     
@@ -117,12 +128,25 @@ def batch_add_or_update_insurance_history(conn, df: pd.DataFrame):
     
     return report
 
+def is_employee_insured_in_month(conn, employee_id: int, year: int, month: int):
+    """檢查員工在指定月份是否在公司有加保紀錄。"""
+    _, month_end = get_monthly_dates(year, month)
+    query = """
+    SELECT 1 FROM employee_company_history
+    WHERE employee_id = ?
+      AND start_date <= ?
+      AND (end_date IS NULL OR end_date >= ?)
+    LIMIT 1;
+    """
+    cursor = conn.cursor()
+    result = cursor.execute(query, (employee_id, month_end, month_end)).fetchone()
+    return result is not None
+
 def get_insurance_salary_level(conn, base_salary: float):
     """根據薪資查詢對應的健保投保級距金額(上限)。"""
     if not base_salary or base_salary <= 0:
         return base_salary
         
-    # 優先使用健保('health')級距來決定投保薪資
     sql = """
     SELECT salary_max 
     FROM insurance_grade 
@@ -136,6 +160,4 @@ def get_insurance_salary_level(conn, base_salary: float):
     if result:
         return result[0]
     else:
-        # 如果找不到對應級距（可能薪資超過最高級距），則回傳薪資本身或一個預設上限
-        # 這裡我們回傳薪資本身，讓薪資計算邏輯去處理
         return base_salary

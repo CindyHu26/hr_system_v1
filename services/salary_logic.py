@@ -6,7 +6,6 @@ from dateutil.relativedelta import relativedelta
 
 from db import queries_employee as q_emp
 from db import queries_attendance as q_att
-
 from db import queries_salary_base as q_base
 from db import queries_salary_records as q_records
 from db import queries_insurance as q_ins
@@ -15,10 +14,33 @@ from db import queries_allowances as q_allow
 from services import overtime_logic
 from views.annual_leave import calculate_leave_entitlement 
 
+def calculate_single_employee_insurance(conn, insurance_salary, dependents_under_18, dependents_over_18, nhi_status, nhi_status_expiry, year, month):
+    """計算單一員工應負擔的勞健保費，分別返回勞保與健保費用。"""
+    if not insurance_salary or insurance_salary <= 0:
+        return 0, 0
+
+    labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary)
+    total_health_fee = 0
+    
+    is_expired = pd.to_datetime(nhi_status_expiry).date() < date(year, month, 1) if pd.notna(nhi_status_expiry) else False
+    
+    if nhi_status == '自理':
+        total_health_fee = 0
+    elif nhi_status == '低收入戶' and not is_expired:
+        person_fee = health_fee_base * 0.5
+        dependents_fee = (dependents_over_18 * health_fee_base * 0.5)
+        total_health_fee = person_fee + dependents_fee
+    else: 
+        total_dependents_count = dependents_under_18 + dependents_over_18
+        insured_dependents = min(total_dependents_count, 3)
+        total_health_fee = health_fee_base * (1 + insured_dependents)
+        
+    return int(round(labor_fee)), int(round(total_health_fee))
+
 def calculate_salary_df(conn, year, month):
     """
     薪資試算引擎：根據各項資料計算全新的薪資草稿。
-    V7: 導入符合法規的個人二代健保補充保費計算邏輯
+    V9: 整合手動保費調整功能
     """
     TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
 
@@ -37,8 +59,13 @@ def calculate_salary_df(conn, year, month):
         base_info = q_base.get_employee_base_salary_info(conn, emp_id, year, month)
         base_salary = base_info['base_salary'] if base_info else 0
         insurance_salary = base_info['insurance_salary'] if base_info and base_info['insurance_salary'] else base_salary
-        dependents = base_info['dependents'] if base_info else 0
+        dependents_under_18 = base_info['dependents_under_18'] if base_info else 0
+        dependents_over_18 = base_info['dependents_over_18'] if base_info else 0
         
+        labor_override = base_info['labor_insurance_override'] if base_info and pd.notna(base_info['labor_insurance_override']) else None
+        health_override = base_info['health_insurance_override'] if base_info and pd.notna(base_info['health_insurance_override']) else None
+        pension_override = base_info['pension_override'] if base_info and pd.notna(base_info['pension_override']) else None
+
         hourly_rate = base_salary / config.HOURLY_RATE_DIVISOR if config.HOURLY_RATE_DIVISOR > 0 else 0
         details['底薪'] = base_salary
         
@@ -76,9 +103,13 @@ def calculate_salary_df(conn, year, month):
             details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
 
         if insurance_salary > 0:
-            labor_fee, health_fee = q_ins.get_employee_insurance_fee(conn, insurance_salary)
-            total_health_fee = health_fee * (1 + min(dependents, 3))
-            details['勞健保'] = -int(labor_fee + total_health_fee)
+            labor_fee, health_fee = calculate_single_employee_insurance(
+                conn, insurance_salary, dependents_under_18, dependents_over_18,
+                emp['nhi_status'], emp['nhi_status_expiry'], year, month
+            )
+            details['勞保費'] = -int(labor_override) if labor_override is not None else -labor_fee
+            details['健保費'] = -int(health_override) if health_override is not None else -health_fee
+            details['勞退提撥(公司負擔)'] = int(pension_override) if pension_override is not None else int(round(insurance_salary * 0.06))
             
         if emp['nationality'] and emp['nationality'] != 'TW':
             entry_date = datetime.strptime(emp['entry_date'], '%Y-%m-%d').date()
@@ -94,30 +125,19 @@ def calculate_salary_df(conn, year, month):
         bonus_result = q_bonus.get_employee_bonus(conn, emp_id, year, month)
         if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
 
-        # --- [核心修改] 二代健保補充保費計算 (個人高額獎金) ---
         is_insured = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
         if is_insured:
-            # 1. 計算當月發放的獎金總額
             current_month_bonus = sum(details.get(item, 0) for item in config.NHI_BONUS_ITEMS)
-            
-            # 2. 只有當月有發放獎金時，才需要重算
             if current_month_bonus > 0:
-                # 3. 查詢年度累計獎金 和 已扣補充保費
                 cumulative_bonus, already_deducted = q_records.get_cumulative_bonus_for_year(conn, emp_id, year, config.NHI_BONUS_ITEMS)
                 total_cumulative_bonus = cumulative_bonus + current_month_bonus
-
-                # 4. 計算免扣額
                 deduction_threshold = insurance_salary * config.NHI_BONUS_MULTIPLIER
-                
-                # 5. 計算應扣總額
                 taxable_bonus = total_cumulative_bonus - deduction_threshold
                 if taxable_bonus > 0:
                     total_premium_due = round(taxable_bonus * config.NHI_SUPPLEMENT_RATE)
-                    # 6. 本月應扣 = 應扣總額 - 已扣總額
                     this_month_premium = total_premium_due - already_deducted
                     if this_month_premium > 0:
                         details['二代健保補充費'] = -int(this_month_premium)
-        # --- 計算結束 ---
 
         all_salary_data.append(details)
 

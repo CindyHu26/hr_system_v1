@@ -1,62 +1,37 @@
-# views/salary_calculation.py
+# views/salary_review.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import traceback
 from dateutil.relativedelta import relativedelta
 
-from services import salary_logic as logic_salary
 from db import queries_salary_records as q_records
 from db import queries_employee as q_emp
 
 def show_page(conn):
-    st.header("💵 薪資單產生與管理")
+    st.header("💵 薪資單審核與調整")
+    st.info("您可以在此頁面審查、微調由系統產生的薪資草稿，並執行最終的鎖定操作。")
     
     c1, c2 = st.columns(2)
     today = datetime.now()
     last_month = today - relativedelta(months=1)
-    year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 1, value=last_month.year)
-    month = c2.number_input("選擇月份", min_value=1, max_value=12, value=last_month.month)
+    year = c1.number_input("選擇年份", min_value=2020, max_value=today.year + 1, value=last_month.year, key="review_year")
+    month = c2.number_input("選擇月份", min_value=1, max_value=12, value=last_month.month, key="review_month")
 
-    st.write("---")
-    
-    action_c1, action_c2 = st.columns(2)
+    if st.button("🔄 讀取/刷新薪資資料", type="primary"):
+        with st.spinner("正在從資料庫讀取薪資報表..."):
+            report_df, item_types = q_records.get_salary_report_for_editing(conn, year, month)
+            st.session_state.salary_review_df = report_df
+            if report_df.empty:
+                st.warning("資料庫中沒有本月的薪資紀錄，請先至「薪資草稿產生」頁面產生新草稿。")
+            st.rerun()
 
-    with action_c1:
-        if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會根據最新的資料重新計算，並覆蓋現有草稿。"):
-            with st.spinner("正在根據最新資料計算全新草稿..."):
-                try:
-                    new_draft_df, _ = logic_salary.calculate_salary_df(conn, year, month)
-                    if not new_draft_df.empty:
-                        q_records.save_salary_draft(conn, year, month, new_draft_df)
-                        st.success("新草稿已計算並儲存！請點擊右側按鈕讀取以查看。")
-                        if 'salary_report_df' in st.session_state:
-                             del st.session_state['salary_report_df']
-                        st.rerun()
-                    else:
-                        st.warning("當月沒有在職員工，無法產生草稿。")
-                except Exception as e:
-                    st.error("產生草稿時發生錯誤！")
-                    st.code(traceback.format_exc())
-
-
-    with action_c2:
-        if st.button("🔄 讀取已儲存的薪資資料", type="primary"):
-            with st.spinner("正在從資料庫讀取薪資報表..."):
-                report_df, item_types = q_records.get_salary_report_for_editing(conn, year, month)
-                st.session_state.salary_report_df = report_df
-                st.session_state.salary_item_types = item_types
-                if report_df.empty:
-                    st.info("資料庫中沒有本月的薪資紀錄，您可以點擊左側按鈕產生新草稿。")
-                st.rerun()
-
-    if 'salary_report_df' not in st.session_state or st.session_state.salary_report_df.empty:
-        st.info("請點擊「產生/覆蓋薪資草稿」來開始，或點擊「讀取已儲存的薪資資料」。")
+    if 'salary_review_df' not in st.session_state or st.session_state.salary_review_df.empty:
+        st.info("請點擊「讀取/刷新薪資資料」來開始。")
         return
 
     st.write("---")
     
-    df_to_edit = st.session_state.salary_report_df
+    df_to_edit = st.session_state.salary_review_df
     
     st.markdown("##### 薪資單編輯區")
     st.caption("您可以直接在表格中修改 `draft` 狀態的紀錄。`final` 狀態的紀錄已鎖定。")
@@ -64,7 +39,7 @@ def show_page(conn):
     edited_df = st.data_editor(
         df_to_edit.style.apply(lambda row: ['background-color: #f0f2f6'] * len(row) if row.status == 'final' else [''] * len(row), axis=1),
         use_container_width=True,
-        key="salary_editor"
+        key="salary_review_editor"
     )
     
     st.write("---")
@@ -104,8 +79,8 @@ def show_page(conn):
                     ids_to_unlock = final_records[final_records['員工姓名'].isin(to_unlock)]['id'].tolist()
                     count = q_records.revert_salary_to_draft(conn, year, month, ids_to_unlock)
                     st.success(f"成功解鎖 {count} 筆紀錄！請重新讀取資料。")
-                    if 'salary_report_df' in st.session_state:
-                         del st.session_state['salary_report_df']
+                    if 'salary_review_df' in st.session_state:
+                         del st.session_state['salary_review_df']
                     st.rerun()
         else:
             st.info("目前沒有已定版的紀錄可供解鎖。")

@@ -70,20 +70,31 @@ def get_salary_report_for_editing(conn, year, month):
     return report_df[final_cols].sort_values(by='員工編號').reset_index(drop=True), item_types
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):
-    """儲存薪資草稿。"""
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
     item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
+    
     for _, row in df.iterrows():
         emp_id = emp_map.get(row['員工姓名'])
         if not emp_id: continue
-        cursor.execute("INSERT INTO salary (employee_id, year, month, status) VALUES (?, ?, ?, 'draft') ON CONFLICT(employee_id, year, month) DO UPDATE SET status = 'draft' WHERE status != 'final'", (emp_id, year, month))
+
+        # [核心修改] 儲存草稿時，一併寫入勞退提撥金額
+        pension_contribution = row.get('勞退提撥(公司負擔)', 0)
+        cursor.execute("""
+            INSERT INTO salary (employee_id, year, month, status, employer_pension_contribution) 
+            VALUES (?, ?, ?, 'draft', ?) 
+            ON CONFLICT(employee_id, year, month) 
+            DO UPDATE SET status = 'draft', employer_pension_contribution = excluded.employer_pension_contribution
+            WHERE status != 'final'
+        """, (emp_id, year, month, pension_contribution))
+        
         salary_id = cursor.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", (emp_id, year, month)).fetchone()[0]
         cursor.execute("DELETE FROM salary_detail WHERE salary_id = ?", (salary_id,))
         details_to_insert = [(salary_id, item_map.get(k), int(v)) for k, v in row.items() if item_map.get(k) and v != 0]
         if details_to_insert:
             cursor.executemany("INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)", details_to_insert)
     conn.commit()
+
 
 def finalize_salary_records(conn, year, month, df: pd.DataFrame):
     """將薪資紀錄定版，寫入總額與支付方式等最終資訊。"""
@@ -93,16 +104,17 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
         emp_id = emp_map.get(row['員工姓名'])
         if not emp_id: continue
         params = {
-            'total_payable': row.get('應付總額', 0), 'total_deduction': row.get('應扣總額', 0),
-            'net_salary': row.get('實發薪資', 0), 'bank_transfer_amount': row.get('匯入銀行', 0),
+            # ...
             'cash_amount': row.get('現金', 0), 'status': 'final',
+            'employer_pension_contribution': row.get('勞退提撥(公司負擔)', 0),
             'employee_id': emp_id, 'year': year, 'month': month
         }
         cursor.execute("""
             UPDATE salary SET
             total_payable = :total_payable, total_deduction = :total_deduction,
             net_salary = :net_salary, bank_transfer_amount = :bank_transfer_amount,
-            cash_amount = :cash_amount, status = :status
+            cash_amount = :cash_amount, status = :status,
+            employer_pension_contribution = :employer_pension_contribution
             WHERE employee_id = :employee_id AND year = :year AND month = :month
         """, params)
     conn.commit()

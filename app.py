@@ -15,6 +15,7 @@ from views import (
     allowance_setting,          
     bonus_batch,                
     salary_calculation,
+    salary_review,
     annual_summary,             
     nhi_summary,                
     annual_leave,
@@ -46,7 +47,7 @@ PAGES_ATTENDANCE = {
 PAGES_SALARY = {
     "⚙️ 薪資項目管理": salary_item_management,
     "🏦 勞健保級距管理": insurance_grade_management,
-    "📈 基本工資管理": salary_base_history,
+    "📈 薪資基準管理": salary_base_history,
     "➕ 員工常態薪資項設定": allowance_setting,
     "🌀 業務獎金批次匯入": bonus_batch,
     "💵 薪資單產生與管理": salary_calculation,

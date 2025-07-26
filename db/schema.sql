@@ -6,7 +6,10 @@ CREATE TABLE IF NOT EXISTS employee (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name_ch TEXT NOT NULL, id_no TEXT NOT NULL UNIQUE,
     entry_date DATE, hr_code TEXT UNIQUE, gender TEXT, birth_date DATE,
     nationality TEXT DEFAULT 'TW', arrival_date DATE, phone TEXT, address TEXT,
-    dept TEXT, title TEXT, resign_date DATE, bank_account TEXT, note TEXT
+    dept TEXT, title TEXT, resign_date DATE, bank_account TEXT, note TEXT,
+    -- [新增] 健保特殊狀態欄位
+    nhi_status TEXT DEFAULT '一般', -- 一般, 低收入戶, 自理
+    nhi_status_expiry DATE
 );
 
 -- 公司（加保單位）表
@@ -58,7 +61,13 @@ CREATE TABLE IF NOT EXISTS salary_item (
 -- 員工薪資基準歷史紀錄表
 CREATE TABLE IF NOT EXISTS salary_base_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL, base_salary INTEGER NOT NULL,
-    insurance_salary INTEGER, dependents REAL DEFAULT 0, start_date DATE, end_date DATE, note TEXT,
+    insurance_salary INTEGER, 
+    dependents_under_18 REAL DEFAULT 0,
+    dependents_over_18 REAL DEFAULT 0,
+    labor_insurance_override REAL,
+    health_insurance_override REAL,
+    pension_override REAL,
+    start_date DATE, end_date DATE, note TEXT,
     FOREIGN KEY(employee_id) REFERENCES employee(id) ON DELETE CASCADE,
     UNIQUE(employee_id, start_date)
 );
@@ -67,7 +76,9 @@ CREATE TABLE IF NOT EXISTS salary_base_history (
 CREATE TABLE IF NOT EXISTS salary (
     id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER NOT NULL, year INTEGER NOT NULL, month INTEGER NOT NULL,
     status TEXT DEFAULT 'draft', total_payable REAL DEFAULT 0, total_deduction REAL DEFAULT 0,
-    net_salary REAL DEFAULT 0, bank_transfer_amount REAL DEFAULT 0, cash_amount REAL DEFAULT 0, note TEXT,
+    net_salary REAL DEFAULT 0, bank_transfer_amount REAL DEFAULT 0, cash_amount REAL DEFAULT 0, 
+    employer_pension_contribution REAL DEFAULT 0,
+    note TEXT,
     FOREIGN KEY(employee_id) REFERENCES employee(id), UNIQUE(employee_id, year, month)
 );
 

@@ -7,36 +7,48 @@ import re
 from utils.helpers import get_monthly_dates
 
 def get_salary_base_history(conn):
-    """取得所有員工的薪資基準歷史紀錄。"""
+    """取得所有員工的薪資基準歷史紀錄，並包含健保狀態與手動調整欄位。"""
     return pd.read_sql_query("""
         SELECT sh.id, sh.employee_id, e.name_ch, sh.base_salary, sh.insurance_salary,
-               sh.dependents, sh.start_date, sh.end_date, sh.note
+               sh.dependents_under_18, sh.dependents_over_18, 
+               sh.labor_insurance_override, sh.health_insurance_override, sh.pension_override,
+               sh.start_date, sh.end_date, sh.note,
+               e.nhi_status, e.nhi_status_expiry
         FROM salary_base_history sh JOIN employee e ON sh.employee_id = e.id
         ORDER BY e.hr_code, sh.start_date DESC
     """, conn)
 
 def get_employee_base_salary_info(conn, emp_id, year, month):
-    """查詢員工在特定時間點的底薪、投保薪資與眷屬數。"""
+    """查詢員工在特定時間點的底薪、投保薪資、眷屬數及手動調整值。"""
     _, month_end = get_monthly_dates(year, month)
-    sql = "SELECT base_salary, insurance_salary, dependents FROM salary_base_history WHERE employee_id = ? AND start_date <= ? ORDER BY start_date DESC LIMIT 1"
+    sql = """
+    SELECT base_salary, insurance_salary, dependents_under_18, dependents_over_18,
+           labor_insurance_override, health_insurance_override, pension_override
+    FROM salary_base_history 
+    WHERE employee_id = ? AND start_date <= ? 
+    ORDER BY start_date DESC 
+    LIMIT 1
+    """
     return conn.execute(sql, (emp_id, month_end)).fetchone()
 
 def get_employees_below_minimum_wage(conn, new_minimum_wage: int):
-    """找出所有在職且當前底薪低於指定薪資的員工。"""
+    """找出所有在職且當前底薪低於指定薪資的員工，並包含計算保費所需的所有資訊。"""
     query = """
     WITH latest_salary AS (
         SELECT
-            employee_id, base_salary, insurance_salary, dependents,
+            employee_id, base_salary, insurance_salary, 
+            dependents_under_18, dependents_over_18,
             ROW_NUMBER() OVER(PARTITION BY employee_id ORDER BY start_date DESC) as rn
         FROM salary_base_history
     )
     SELECT
         e.id as employee_id, e.name_ch as "員工姓名",
         ls.base_salary as "目前底薪", ls.insurance_salary as "目前投保薪資",
-        ls.dependents as "目前眷屬數"
+        ls.dependents_under_18, ls.dependents_over_18,
+        e.nhi_status, e.nhi_status_expiry
     FROM employee e
     JOIN latest_salary ls ON e.id = ls.employee_id
-    WHERE e.resign_date IS NULL AND ls.rn = 1 AND ls.base_salary < ?
+    WHERE (e.resign_date IS NULL OR e.resign_date = '') AND ls.rn = 1 AND ls.base_salary < ?
     ORDER BY e.hr_code;
     """
     return pd.read_sql_query(query, conn, params=(new_minimum_wage,))
@@ -47,13 +59,18 @@ def batch_update_base_salary(conn, preview_df: pd.DataFrame, new_wage: int, effe
     try:
         data_to_insert = [
             (
-                row['employee_id'], new_wage, new_wage, row['目前眷屬數'],
+                row['employee_id'], new_wage, new_wage, 
+                row['dependents_under_18'], row['dependents_over_18'],
                 effective_date.strftime('%Y-%m-%d'), None,
                 f"配合 {effective_date.year} 年基本工資調整"
             )
             for _, row in preview_df.iterrows()
         ]
-        sql = "INSERT INTO salary_base_history (employee_id, base_salary, insurance_salary, dependents, start_date, end_date, note) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        sql = """
+        INSERT INTO salary_base_history 
+            (employee_id, base_salary, insurance_salary, dependents_under_18, dependents_over_18, start_date, end_date, note) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
         cursor.executemany(sql, data_to_insert)
         conn.commit()
         return cursor.rowcount
@@ -74,22 +91,27 @@ def get_batch_employee_insurance_salary(conn, emp_ids: list, year: int, month: i
 
 def batch_add_or_update_salary_base_history(conn, df: pd.DataFrame):
     cursor = conn.cursor()
-    report = {'inserted': 0, 'updated': 0, 'errors': []}
+    report = {'inserted': 0, 'updated': 0, 'failed': 0, 'errors': []}
     
-    # --- [核心修改] 建立一個清理過的姓名 -> ID 映射表 ---
     emp_df_db = pd.read_sql("SELECT name_ch, id FROM employee", conn)
-    # 移除所有空白字元來建立一個穩定的匹配鍵
     emp_df_db['clean_name'] = emp_df_db['name_ch'].astype(str).str.replace(r'\s+', '', regex=True)
     emp_map = emp_df_db.set_index('clean_name')['id'].to_dict()
-    # --- 修改結束 ---
 
+    # [核心修改] 更新 SQL 語句以匹配所有欄位
     sql = """
-    INSERT INTO salary_base_history (employee_id, base_salary, insurance_salary, dependents, start_date, end_date, note)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO salary_base_history 
+        (employee_id, base_salary, insurance_salary, dependents_under_18, dependents_over_18, 
+         labor_insurance_override, health_insurance_override, pension_override,
+         start_date, end_date, note)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(employee_id, start_date) DO UPDATE SET
         base_salary = excluded.base_salary,
         insurance_salary = excluded.insurance_salary,
-        dependents = excluded.dependents,
+        dependents_under_18 = excluded.dependents_under_18,
+        dependents_over_18 = excluded.dependents_over_18,
+        labor_insurance_override = excluded.labor_insurance_override,
+        health_insurance_override = excluded.health_insurance_override,
+        pension_override = excluded.pension_override,
         end_date = excluded.end_date,
         note = excluded.note;
     """
@@ -97,18 +119,18 @@ def batch_add_or_update_salary_base_history(conn, df: pd.DataFrame):
     try:
         data_to_upsert = []
         for index, row in df.iterrows():
-            # --- [核心修改] 使用清理過的姓名來進行匹配 ---
             clean_name_excel = re.sub(r'\s+', '', str(row['name_ch']))
             emp_id = emp_map.get(clean_name_excel)
-            # --- 修改結束 ---
             
             if not emp_id:
-                # 使用原始姓名來回報錯誤，方便使用者查找
                 report['errors'].append({'row': row.get('original_index', index + 2), 'reason': f"找不到員工姓名 '{row['name_ch']}'。"})
                 continue
             
+            # [核心修改] 確保使用新的眷屬欄位和手動調整欄位
             data_to_upsert.append((
-                emp_id, row['base_salary'], row['insurance_salary'], row['dependents'],
+                emp_id, row['base_salary'], row['insurance_salary'], 
+                row['dependents_under_18'], row['dependents_over_18'],
+                row.get('labor_insurance_override'), row.get('health_insurance_override'), row.get('pension_override'),
                 row['start_date'], row.get('end_date'), row.get('note')
             ))
         

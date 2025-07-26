@@ -16,11 +16,12 @@ def get_employee_map(conn):
     return df
     
 def get_active_employees_for_month(conn, year, month):
-    """查詢指定月份仍在職的員工。"""
+    """查詢指定月份仍在職的員工，並包含健保狀態。"""
     start_date, end_date = get_monthly_dates(year, month)
-    # [核心修改] 增加對 resign_date = '' 的判斷，使其也被視為在職
+    # [核心修改] 選取新增的健保狀態欄位
     query = """
-    SELECT e.id, e.name_ch, e.hr_code, e.entry_date, e.nationality 
+    SELECT e.id, e.name_ch, e.hr_code, e.entry_date, e.nationality,
+           e.nhi_status, e.nhi_status_expiry
     FROM employee e
     WHERE (e.entry_date IS NOT NULL AND e.entry_date <= ?) 
       AND (e.resign_date IS NULL OR e.resign_date = '' OR e.resign_date >= ?)
@@ -35,7 +36,6 @@ def get_all_companies(conn):
 def batch_add_or_update_employees(conn, df: pd.DataFrame):
     """
     批次新增或更新員工資料。
-    使用 SQLite 的 ON CONFLICT 功能，以 id_no 為唯一鍵。
     """
     cursor = conn.cursor()
     report = {'inserted': 0, 'updated': 0, 'processed': 0, 'errors': []}
@@ -43,7 +43,7 @@ def batch_add_or_update_employees(conn, df: pd.DataFrame):
     all_cols = [
         'name_ch', 'id_no', 'hr_code', 'entry_date', 'gender', 'birth_date',
         'nationality', 'arrival_date', 'phone', 'address', 'dept', 'title',
-        'resign_date', 'bank_account', 'note'
+        'resign_date', 'bank_account', 'note', 'nhi_status', 'nhi_status_expiry'
     ]
     
     update_cols = [col for col in all_cols if col != 'id_no']
@@ -64,7 +64,6 @@ def batch_add_or_update_employees(conn, df: pd.DataFrame):
             cursor.execute(sql, data_tuple)
             
         conn.commit()
-        
         report['processed'] = len(df)
         report['updated'] = cursor.rowcount
         

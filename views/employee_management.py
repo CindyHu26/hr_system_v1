@@ -16,7 +16,8 @@ COLUMN_MAP = {
     'id': '系統ID', 'name_ch': '姓名', 'id_no': '身份證號', 'entry_date': '到職日',
     'hr_code': '員工編號', 'gender': '性別', 'birth_date': '生日', 'nationality': '國籍',
     'arrival_date': '首次抵台日', 'phone': '電話', 'address': '地址', 'dept': '部門',
-    'title': '職稱', 'resign_date': '離職日', 'bank_account': '銀行帳號', 'note': '備註'
+    'title': '職稱', 'resign_date': '離職日', 'bank_account': '銀行帳號', 'note': '備註',
+    'nhi_status': '健保狀態', 'nhi_status_expiry': '狀態效期' # 新增
 }
 
 TEMPLATE_COLUMNS = {
@@ -47,6 +48,10 @@ def show_page(conn):
         with st.form("add_employee_form", clear_on_submit=True):
             st.write("請填寫新員工資料 (*為必填)")
             c1, c2, c3 = st.columns(3)
+            # ... (其他欄位)
+            nhi_status_add = c1.selectbox("健保狀態", ["一般", "低收入戶", "自理"])
+            nhi_expiry_add = c2.date_input("狀態效期", value=None)
+
             new_data = {
                 'name_ch': c1.text_input("姓名*"), 'hr_code': c2.text_input("員工編號*"),
                 'id_no': c3.text_input("身分證號*"), 'dept': c1.text_input("部門"),
@@ -55,7 +60,9 @@ def show_page(conn):
                 'arrival_date': c2.date_input("首次抵台日期", value=None), 'entry_date': c3.date_input("到職日", value=None),
                 'birth_date': c1.date_input("生日", value=None), 'resign_date': c2.date_input("離職日", value=None),
                 'phone': c3.text_input("電話"), 'address': st.text_input("地址"),
-                'bank_account': st.text_input("銀行帳號"), 'note': st.text_area("備註")
+                'bank_account': st.text_input("銀行帳號"), 'note': st.text_area("備註"),
+                'nhi_status': nhi_status_add,
+                'nhi_status_expiry': nhi_expiry_add
             }
 
             if st.form_submit_button("確認新增"):
@@ -85,6 +92,9 @@ def show_page(conn):
                     st.write(f"### 正在編輯: {emp_data['name_ch']}")
                     c1, c2, c3 = st.columns(3)
 
+                    # [核心修改] 使用 'or' 語句來處理空字串的情況
+                    current_nationality_code = emp_data.get('nationality') or 'TW'
+                    
                     updated_data = {
                         'name_ch': c1.text_input("姓名*", value=emp_data.get('name_ch', '')),
                         'hr_code': c2.text_input("員工編號*", value=emp_data.get('hr_code', '')),
@@ -92,7 +102,7 @@ def show_page(conn):
                         'dept': c1.text_input("部門", value=emp_data.get('dept', '') or ''),
                         'title': c2.text_input("職稱", value=emp_data.get('title', '') or ''),
                         'gender': c3.selectbox("性別", ["男", "女"], index=["男", "女"].index(emp_data['gender']) if emp_data.get('gender') in ["男", "女"] else 0),
-                        'nationality': NATIONALITY_MAP[c1.selectbox("國籍", list(NATIONALITY_MAP.keys()), index=list(NATIONALITY_MAP_REVERSE.keys()).index(emp_data.get('nationality', 'TW')))],
+                        'nationality': NATIONALITY_MAP[c1.selectbox("國籍", list(NATIONALITY_MAP.keys()), index=list(NATIONALITY_MAP_REVERSE.keys()).index(current_nationality_code))],
                         'arrival_date': c2.date_input("首次抵台日期", value=to_date(emp_data.get('arrival_date'))),
                         'entry_date': c3.date_input("到職日", value=to_date(emp_data.get('entry_date'))),
                         'birth_date': c1.date_input("生日", value=to_date(emp_data.get('birth_date'))),
@@ -100,7 +110,9 @@ def show_page(conn):
                         'phone': c3.text_input("電話", value=emp_data.get('phone', '') or ''),
                         'address': st.text_input("地址", value=emp_data.get('address', '') or ''),
                         'bank_account': st.text_input("銀行帳號", value=emp_data.get('bank_account', '') or ''),
-                        'note': st.text_area("備註", value=emp_data.get('note', '') or '')
+                        'note': st.text_area("備註", value=emp_data.get('note', '') or ''),
+                        'nhi_status': c1.selectbox("健保狀態", ["一般", "低收入戶", "自理"], index=["一般", "低收入戶", "自理"].index(emp_data.get('nhi_status', '一般'))),
+                        'nhi_status_expiry': c2.date_input("狀態效期", value=to_date(emp_data.get('nhi_status_expiry')))
                     }
 
                     c_update, c_delete = st.columns(2)
@@ -124,7 +136,6 @@ def show_page(conn):
                         except Exception as e:
                             st.error(f"刪除失敗：{e} (該員工可能仍有關聯的出勤或薪資紀錄)")
 
-    # 【新增】批次匯入功能的完整 UI
     with tab3:
         create_batch_import_section(
             info_text="說明：請先下載範本檔案，依照格式填寫員工資料後，再將檔案上傳。系統會以「身分證號」為唯一鍵進行新增或更新。",
