@@ -78,32 +78,14 @@ def get_salary_report_for_editing(conn, year, month):
     return report_df[final_cols].sort_values(by='員工編號').reset_index(drop=True), item_types
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):
-    """儲存薪資草稿。V2: 加入詳細的偵錯日誌"""
-    print("\n" + "*"*50)
-    print(f"【DEBUG】進入 save_salary_draft 函式，準備儲存 {len(df)} 筆草稿")
-
+    """儲存薪資草稿。"""
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
-    item_map_df = pd.read_sql("SELECT id, name FROM salary_item", conn)
-    item_map = dict(zip(item_map_df['name'], item_map_df['id']))
-    
-    # 關鍵偵錯點：檢查 item_map 的內容
-    print(f"【DEBUG】從 salary_item 表建立的 item_map: \n{item_map}")
-
-    labor_fee_id = item_map.get('勞保費')
-    health_fee_id = item_map.get('健保費')
-    print(f"【DEBUG】item_map.get('勞保費') 結果: {labor_fee_id}")
-    print(f"【DEBUG】item_map.get('健保費') 結果: {health_fee_id}")
+    item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
     
     for _, row in df.iterrows():
-        emp_name = row['員工姓名']
-        emp_id = emp_map.get(emp_name)
-        if not emp_id:
-            print(f"  [DEBUG] 找不到員工 '{emp_name}' 的 ID，跳過。")
-            continue
-        
-        print(f"\n--- 正在處理員工: {emp_name} (ID: {emp_id}) ---")
-        print(f"  [DEBUG] 該員工的薪資 row 資料: \n{row.to_dict()}")
+        emp_id = emp_map.get(row['員工姓名'])
+        if not emp_id: continue
 
         pension_contribution = row.get('勞退提撥(公司負擔)', 0)
         cursor.execute("""
@@ -115,32 +97,16 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
         """, (emp_id, year, month, pension_contribution))
         
         salary_id = cursor.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", (emp_id, year, month)).fetchone()[0]
-        print(f"  [DEBUG] 取得或建立的 salary_id: {salary_id}")
-        
         cursor.execute("DELETE FROM salary_detail WHERE salary_id = ?", (salary_id,))
         
         details_to_insert = []
-        
-        # 遍歷該員工的所有薪資欄位
         for k, v in row.items():
-            item_id = item_map.get(k)
-            # 檢查這個欄位名稱是否存在於 item_map 中
-            if item_id and v != 0:
-                print(f"    ✔️  欄位 '{k}' (Value: {v}) 存在於 item_map (ID: {item_id})，準備寫入。")
-                # 請注意，資料庫中扣款應為負數
-                amount_to_db = int(v) if k not in ['勞保費', '健保費'] else -abs(int(v))
-                details_to_insert.append((salary_id, item_id, amount_to_db))
-            elif v != 0:
-                # 如果值不為 0 但找不到對應的薪資項目，就印出警告
-                print(f"    ❌  欄位 '{k}' (Value: {v}) 不存在於 item_map，將被忽略！")
+            if item_map.get(k) and v != 0:
+                details_to_insert.append((salary_id, item_map.get(k), int(v)))
 
         if details_to_insert:
-            print(f"  [DEBUG] 準備寫入 salary_detail 的資料: {details_to_insert}")
             cursor.executemany("INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)", details_to_insert)
-    
     conn.commit()
-    print("*"*50 + "\n")
-    print(f"【DEBUG】save_salary_draft 函式執行完畢，資料已 commit。")
 
 
 def finalize_salary_records(conn, year, month, df: pd.DataFrame):
