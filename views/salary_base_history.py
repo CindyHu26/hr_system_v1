@@ -82,8 +82,8 @@ def show_page(conn):
                 selected_emp_key = st.selectbox("選擇員工*", options=emp_options.keys())
                 c1, c2, c3 = st.columns(3)
                 base_salary = c1.number_input("底薪*", min_value=0)
-                dependents_under_18 = c2.number_input("健保眷屬數(<18歲)*", min_value=0, step=1)
-                dependents_over_18 = c3.number_input("健保眷屬數(>=18歲)*", min_value=0, step=1)
+                dependents_under_18 = c2.number_input("健保眷屬數(<18歲)*", min_value=0.0, step=1.00, format="%.2f")
+                dependents_over_18 = c3.number_input("健保眷屬數(>=18歲)*", min_value=0.0, step=1.00, format="%.2f")
                 
                 c4, c5 = st.columns(2)
                 start_date = c4.date_input("生效日*", value=datetime.now())
@@ -124,8 +124,8 @@ def show_page(conn):
                         st.write(f"正在編輯 **{record_data['name_ch']}** 的紀錄 (ID: {record_id})")
                         c1, c2, c3 = st.columns(3)
                         base_salary_edit = c1.number_input("底薪*", min_value=0, value=int(record_data['base_salary']))
-                        dependents_under_18_edit = c2.number_input("健保眷屬數(<18歲)*", min_value=0, step=1, value=int(record_data.get('dependents_under_18', 0)))
-                        dependents_over_18_edit = c3.number_input("健保眷屬數(>=18歲)*", min_value=0, step=1, value=int(record_data.get('dependents_over_18', 0)))
+                        dependents_under_18_edit = c2.number_input("健保眷屬數(<18歲)*", min_value=0.0, step=1.00, format="%.2f", value=float(record_data.get('dependents_under_18', 0)))
+                        dependents_over_18_edit = c3.number_input("健保眷屬數(>=18歲)*", min_value=0.0, step=1.00, format="%.2f", value=float(record_data.get('dependents_over_18', 0)))
                         
                         c4, c5 = st.columns(2)
                         start_date_edit = c4.date_input("生效日*", value=to_date(record_data.get('start_date')))
