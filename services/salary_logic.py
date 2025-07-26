@@ -15,27 +15,58 @@ from services import overtime_logic
 from views.annual_leave import calculate_leave_entitlement 
 
 def calculate_single_employee_insurance(conn, insurance_salary, dependents_under_18, dependents_over_18, nhi_status, nhi_status_expiry, year, month):
-    """計算單一員工應負擔的勞健保費，分別返回勞保與健保費用。"""
+    """
+    計算單一員工應負擔的勞健保費，分別返回勞保與健保費用。
+    V2: 實現完整的健保眷屬、特殊身分（低收入戶、自理）及效期計算邏輯。
+    """
     if not insurance_salary or insurance_salary <= 0:
         return 0, 0
 
-    # [核心修改] 將年份和月份傳遞給查詢函式
+    # 1. 取得個人的勞保費與健保費基數
     labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary, year, month)
     total_health_fee = 0
     
+    # 2. 檢查特殊身分是否過期
+    # 如果有設定效期，且效期早于計算月份的第一天，則視為已過期
     is_expired = pd.to_datetime(nhi_status_expiry).date() < date(year, month, 1) if pd.notna(nhi_status_expiry) else False
     
+    # 3. 根據健保狀態進行分支計算
     if nhi_status == '自理':
+        # 公司不需負擔健保費
         total_health_fee = 0
+        
     elif nhi_status == '低收入戶' and not is_expired:
+        # --- 低收入戶計算邏輯 ---
+        # 規則：員工本人與18歲以上眷屬保費減半，18歲以下全額補助（即費用為0）。總計最多只計算3名眷屬。
+        
+        # 員工本人的保費（減半）
         person_fee = health_fee_base * 0.5
-        dependents_fee = (dependents_over_18 * health_fee_base * 0.5)
+        
+        # 優先計算無需付費的眷屬（18歲以下），以盡可能達到3人免額度
+        insured_under_18 = min(dependents_under_18, 3)
+        
+        # 剩餘可加保的眷屬額度
+        remaining_slots = 3 - insured_under_18
+        
+        # 用剩餘的額度來計算需要付費的眷屬（18歲以上）
+        insured_over_18 = min(dependents_over_18, remaining_slots)
+        
+        # 18歲以上眷屬的保費（減半）
+        dependents_fee = insured_over_18 * health_fee_base * 0.5
+        
+        # 總健保費 = 本人保費 + 18歲以上眷屬保費
         total_health_fee = person_fee + dependents_fee
-    else: 
+        
+    else: # 一般身分或特殊身分已過期
+        # --- 一般身分計算邏輯 ---
+        # 規則：本人+所有眷屬，最多計算3名眷屬的費用。
         total_dependents_count = dependents_under_18 + dependents_over_18
         insured_dependents = min(total_dependents_count, 3)
+        
+        # 總健保費 = 基數 * (1位本人 + N位眷屬)
         total_health_fee = health_fee_base * (1 + insured_dependents)
         
+    # 回傳整數結果
     return int(round(labor_fee)), int(round(total_health_fee))
 
 def calculate_salary_df(conn, year, month):
