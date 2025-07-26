@@ -53,7 +53,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 def calculate_salary_df(conn, year, month):
     """
     薪資試算引擎：根據各項資料計算全新的薪資草稿。
-    V9: 整合手動保費調整功能
+    V11: 修正手動健保費的計算邏輯，使其作為基數乘以眷屬數。
     """
     TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
 
@@ -114,19 +114,16 @@ def calculate_salary_df(conn, year, month):
 
         for item in q_allow.get_employee_recurring_items(conn, emp_id):
             details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
-
+        
         if insurance_salary > 0:
-            print(f"  [DEBUG] 準備呼叫 calculate_single_employee_insurance，傳入 insurance_salary: {insurance_salary}")
-            labor_fee, health_fee = calculate_single_employee_insurance(
+            auto_labor_fee, auto_health_fee = calculate_single_employee_insurance(
                 conn, insurance_salary, dependents_under_18, dependents_over_18,
                 emp['nhi_status'], emp['nhi_status_expiry'], year, month
             )
-            print(f"  [DEBUG] calculate_single_employee_insurance 回傳 -> labor_fee: {labor_fee}, health_fee: {health_fee}")
-            details['勞保費'] = -int(labor_override) if labor_override is not None else -labor_fee
-            details['健保費'] = -int(health_override) if health_override is not None else -health_fee
+            
+            details['勞保費'] = -int(labor_override) if labor_override is not None else -auto_labor_fee
+            details['健保費'] = -int(health_override) if health_override is not None else -auto_health_fee
             details['勞退提撥(公司負擔)'] = int(pension_override) if pension_override is not None else int(round(insurance_salary * 0.06))
-        else:
-            print("  [DEBUG] insurance_salary 為 0，跳過保險計算。")
             
         if emp['nationality'] and emp['nationality'] != 'TW':
             entry_date = datetime.strptime(emp['entry_date'], '%Y-%m-%d').date()

@@ -21,59 +21,40 @@ def get_all_insurance_history(conn):
 def get_employee_insurance_fee(conn, insurance_salary: int, year: int, month: int):
     """
     根據投保薪資、年份和月份，查詢員工應負擔的勞健保費用。
-    V5: 加入詳細的偵錯日誌。
     """
-    print("\n" + "="*50)
-    print(f"【DEBUG】進入 get_employee_insurance_fee 函式")
-    print(f"【DEBUG】輸入參數 -> insurance_salary: {insurance_salary}, year: {year}, month: {month}")
-
     if not insurance_salary or insurance_salary <= 0:
-        print(f"【DEBUG】insurance_salary 為 0 或無效，直接返回 (0, 0)")
-        print("="*50 + "\n")
         return 0, 0
-
+        
     cursor = conn.cursor()
     month_end_date = get_monthly_dates(year, month)[1]
-    print(f"【DEBUG】計算出的查詢基準日 (月底): {month_end_date}")
 
     def get_fee_by_type(ins_type: str):
-        print(f"  ├─【DEBUG】正在查詢 '{ins_type}' 費用...")
-
         query = """
         SELECT g.employee_fee
         FROM insurance_grade g
         WHERE g.type = ?
           AND g.start_date = (
-              SELECT MAX(start_date)
-              FROM insurance_grade
+              SELECT MAX(start_date) 
+              FROM insurance_grade 
               WHERE type = ? AND start_date <= ?
           )
           AND (
               ? BETWEEN g.salary_min AND g.salary_max
-              OR
+              OR 
               g.grade = (SELECT MAX(grade) FROM insurance_grade WHERE type = ? AND start_date = g.start_date) AND ? > g.salary_max
           )
         LIMIT 1;
         """
         params = (ins_type, ins_type, month_end_date, insurance_salary, ins_type, insurance_salary)
-
-        print(f"  │  ├─ SQL Query: \n{query}")
-        print(f"  │  └─ SQL Params: {params}")
-
         fee_row = cursor.execute(query, params).fetchone()
-        print(f"  └─【DEBUG】資料庫查詢結果 (fee_row): {fee_row}")
-
-        fee = fee_row[0] if fee_row else 0
-        print(f"  └─【DEBUG】'{ins_type}' 費用計算結果: {fee}")
-        return fee
+        
+        return fee_row[0] if fee_row else 0
 
     labor_fee = get_fee_by_type('labor')
     health_fee = get_fee_by_type('health')
-
-    print(f"【DEBUG】函式最終返回 -> labor_fee: {labor_fee}, health_fee: {health_fee}")
-    print("="*50 + "\n")
-
+    
     return labor_fee, health_fee
+
 
 def get_insurance_grades(conn):
     """取得所有勞健保級距資料。"""
