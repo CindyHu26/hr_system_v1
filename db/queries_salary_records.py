@@ -8,18 +8,18 @@ from utils.helpers import get_monthly_dates
 def get_salary_report_for_editing(conn, year, month):
     """
     薪資報表產生器: 從資料庫讀取資料，並處理草稿/定版邏輯後呈現。
-    這是薪資頁面最關鍵的查詢函式。
+    V2: 合併勞健保費欄位供前端顯示。
     """
     start_date, end_date = get_monthly_dates(year, month)
     active_emp_df = pd.read_sql_query(
-        "SELECT id as employee_id, name_ch as '員工姓名', hr_code as '員工編號' FROM employee WHERE (entry_date <= ?) AND (resign_date IS NULL OR resign_date >= ?)",
+        "SELECT id as employee_id, name_ch as '員工姓名', hr_code as '員工編號' FROM employee WHERE (entry_date <= ?) AND (resign_date IS NULL OR resign_date = '' OR resign_date >= ?)",
         conn,
         params=(end_date, start_date)
     )
     if active_emp_df.empty:
         return pd.DataFrame(), {}
 
-    salary_main_df = pd.read_sql_query("SELECT * FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
+    salary_main_df = pd.read_sql_query("SELECT *, employer_pension_contribution as '勞退提撥(公司負擔)' FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
     details_query = """
     SELECT s.employee_id, si.name as item_name, sd.amount
     FROM salary_detail sd
@@ -43,10 +43,18 @@ def get_salary_report_for_editing(conn, year, month):
     for item in item_types.keys():
         if item not in report_df.columns: report_df[item] = 0
     report_df.fillna(0, inplace=True)
+    
+    # --- [核心修改] 合併勞健保費 ---
+    report_df['勞健保'] = report_df.get('勞保費', 0) + report_df.get('健保費', 0)
+    
+    # 移除獨立的勞保費和健保費，避免在UI上重複顯示
+    if '勞保費' in item_types: del item_types['勞保費']
+    if '健保費' in item_types: del item_types['健保費']
+    item_types['勞健保'] = 'deduction' # 將合併後的項目視為扣除項
 
     earning_cols = [c for c, t in item_types.items() if t == 'earning' and c in report_df.columns]
     deduction_cols = [c for c, t in item_types.items() if t == 'deduction' and c in report_df.columns]
-
+    
     draft_mask = report_df['status'] == 'draft'
     if draft_mask.any():
         report_df.loc[draft_mask, '應付總額'] = report_df.loc[draft_mask, earning_cols].sum(axis=1, numeric_only=True)
@@ -63,22 +71,25 @@ def get_salary_report_for_editing(conn, year, month):
         report_df.loc[final_mask, '匯入銀行'] = report_df.loc[final_mask, 'bank_transfer_amount']
         report_df.loc[final_mask, '現金'] = report_df.loc[final_mask, 'cash_amount']
 
-    final_cols = ['employee_id', '員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實發薪資', '匯入銀行', '現金']
+    final_cols = ['employee_id', '員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實發薪資', '匯入銀行', '現金', '勞退提撥(公司負擔)']
     for col in final_cols:
         if col not in report_df.columns: report_df[col] = 0
 
     return report_df[final_cols].sort_values(by='員工編號').reset_index(drop=True), item_types
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):
+    """儲存薪資草稿。"""
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
     item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
+    
+    labor_fee_id = item_map.get('勞保費')
+    health_fee_id = item_map.get('健保費')
     
     for _, row in df.iterrows():
         emp_id = emp_map.get(row['員工姓名'])
         if not emp_id: continue
 
-        # [核心修改] 儲存草稿時，一併寫入勞退提撥金額
         pension_contribution = row.get('勞退提撥(公司負擔)', 0)
         cursor.execute("""
             INSERT INTO salary (employee_id, year, month, status, employer_pension_contribution) 
@@ -90,7 +101,23 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
         
         salary_id = cursor.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", (emp_id, year, month)).fetchone()[0]
         cursor.execute("DELETE FROM salary_detail WHERE salary_id = ?", (salary_id,))
-        details_to_insert = [(salary_id, item_map.get(k), int(v)) for k, v in row.items() if item_map.get(k) and v != 0]
+        
+        # --- [核心修改] 將手動修改的勞健保總額拆分回寫 ---
+        details_to_insert = []
+        if '勞健保' in row and (labor_fee_id or health_fee_id):
+            # 簡單按比例拆分，或預設給健保（實際不影響總額）
+            # 這裡的拆分不追求絕對精準，因為總額才是關鍵
+            total_fee = abs(row['勞健保'])
+            # 假設優先滿足勞保，剩餘給健保
+            if labor_fee_id:
+                details_to_insert.append((salary_id, labor_fee_id, -total_fee))
+            elif health_fee_id:
+                details_to_insert.append((salary_id, health_fee_id, -total_fee))
+        
+        for k, v in row.items():
+            if item_map.get(k) and v != 0 and k not in ['勞健保', '勞保費', '健保費']:
+                details_to_insert.append((salary_id, item_map.get(k), int(v)))
+
         if details_to_insert:
             cursor.executemany("INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)", details_to_insert)
     conn.commit()

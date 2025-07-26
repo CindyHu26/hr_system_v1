@@ -1,4 +1,4 @@
-# views/salary_calculation.py
+# pages/salary_calculation.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -23,7 +23,7 @@ def show_page(conn):
     action_c1, action_c2 = st.columns(2)
 
     with action_c1:
-        if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會根據最新的資料重新計算，並覆蓋現有草稿。"):
+        if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會根據最新的出勤、假單等資料重新計算，並覆蓋現有草稿。"):
             with st.spinner("正在根據最新資料計算全新草稿..."):
                 try:
                     new_draft_df, _ = logic_salary.calculate_salary_df(conn, year, month)
@@ -38,7 +38,6 @@ def show_page(conn):
                 except Exception as e:
                     st.error("產生草稿時發生錯誤！")
                     st.code(traceback.format_exc())
-
 
     with action_c2:
         if st.button("🔄 讀取已儲存的薪資資料", type="primary"):
