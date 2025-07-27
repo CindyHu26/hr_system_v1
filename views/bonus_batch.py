@@ -8,18 +8,17 @@ from dateutil.relativedelta import relativedelta
 from services import bonus_scraper as scraper
 from services import bonus_logic as logic_bonus
 from db import queries_bonus as q_bonus
-# 【新增】匯入員工查詢模組
 from db import queries_employee as q_emp
 
 def show_page(conn):
     st.header("🌀 業務獎金批次匯入")
-    st.info("此功能將會登入舊版業績系統，抓取指定月份的收款紀錄，並依規則計算業務獎金後存入資料庫中繼站。")
+    st.info("此功能將會登入公司系統，抓取指定月份的收款紀錄，並依規則計算業務獎金後存入資料庫中繼站。")
 
     st.subheader("步驟 1: 輸入系統資訊與查詢區間")
     with st.form("scrape_form"):
         c1, c2 = st.columns(2)
-        username = c1.text_input("業績系統帳號", type="password")
-        password = c2.text_input("業績系統密碼", type="password")
+        username = c1.text_input("公司系統帳號", type="password")
+        password = c2.text_input("公司系統密碼", type="password")
         
         c3, c4 = st.columns(2)
         today = datetime.now()
@@ -35,7 +34,6 @@ def show_page(conn):
         else:
             progress_bar = st.progress(0, text="準備開始...")
             
-            # 【核心修改】從人資系統資料庫獲取員工名單，而不是從獎金系統
             with st.spinner("正在從人資系統資料庫獲取員工名單..."):
                 employees_df = q_emp.get_all_employees(conn)
                 employee_names = employees_df['name_ch'].unique().tolist()
@@ -47,11 +45,9 @@ def show_page(conn):
             def progress_callback(message, percent):
                 progress_bar.progress(percent, text=message)
             
-            # 【核心修改】將 HR 系統的員工名單傳遞給爬蟲
             with st.spinner("正在遍歷所有業務員並抓取資料，請耐心等候..."):
                 all_details_df, not_found_employees = scraper.fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback)
             
-            # 【新增】如果爬蟲回報有找不到的員工，在此處顯示警告
             if not_found_employees:
                 st.warning(f"注意：在獎金系統的下拉選單中找不到以下員工，已自動跳過： {', '.join(not_found_employees)}")
 
@@ -60,11 +56,13 @@ def show_page(conn):
             with st.spinner("正在處理明細並計算獎金..."):
                 summary_df, detailed_view_df = logic_bonus.process_and_calculate_bonuses(conn, all_details_df, year, month)
             
+            # 將計算結果與詳細資料存入 session state，方便後續使用
             st.session_state.bonus_summary = summary_df
             st.session_state.bonus_detailed_view = detailed_view_df
             st.success("獎金計算完成！")
             st.rerun()
 
+    # 如果 session 中有計算結果，則顯示
     if 'bonus_summary' in st.session_state:
         st.write("---")
         st.subheader("步驟 2: 計算結果預覽")
@@ -84,12 +82,14 @@ def show_page(conn):
                     with st.spinner("正在寫入資料庫..."):
                         count = q_bonus.save_bonuses_to_monthly_table(conn, year, month, summary_df)
                     st.success(f"成功將 {count} 筆獎金紀錄存入資料庫！")
+                    # 清除 session state 避免重複操作
                     del st.session_state.bonus_summary
                     del st.session_state.bonus_detailed_view
                     st.rerun()
                 except Exception as e:
                     st.error(f"存入資料庫時發生錯誤: {e}")
 
+        # **【核心修改】** 新增一個可展開的區塊來顯示詳細資料
         with st.expander("點此查看完整抓取明細與計算過程"):
             detailed_view_df = st.session_state.get('bonus_detailed_view', pd.DataFrame())
             st.dataframe(detailed_view_df)
