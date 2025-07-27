@@ -30,7 +30,7 @@ def show_page(conn):
 
     if submitted:
         if not username or not password:
-            st.error("請輸入業績系統的帳號與密碼！")
+            st.error("請輸入公司系統的帳號與密碼！")
         else:
             progress_bar = st.progress(0, text="準備開始...")
             
