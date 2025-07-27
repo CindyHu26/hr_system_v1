@@ -133,3 +133,23 @@ CREATE INDEX IF NOT EXISTS idx_employee_id_on_employee_company_history ON employ
 -- 提升依日期篩選紀錄的速度
 CREATE INDEX IF NOT EXISTS idx_date_on_attendance ON attendance (date);
 CREATE INDEX IF NOT EXISTS idx_date_on_leave_record ON leave_record (start_date);
+
+-- 每月業務獎金抓取明細歷史紀錄表
+CREATE TABLE IF NOT EXISTS monthly_bonus_details (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    sequence_no TEXT,
+    employer_name TEXT,
+    entry_date TEXT,
+    foreign_worker_name TEXT,
+    item_name TEXT,
+    bill_date TEXT,
+    receivable_amount TEXT,
+    received_date TEXT,
+    received_amount TEXT,
+    salesperson_name TEXT
+);
+
+-- 提升依年月查詢獎金明細的速度
+CREATE INDEX IF NOT EXISTS idx_year_month_on_monthly_bonus_details ON monthly_bonus_details (year, month);
