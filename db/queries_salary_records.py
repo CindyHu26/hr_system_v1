@@ -8,7 +8,7 @@ from utils.helpers import get_monthly_dates
 def get_salary_report_for_editing(conn, year, month):
     """
     薪資報表產生器: 從資料庫讀取資料，並處理草稿/定版邏輯後呈現。
-    V2: 合併勞健保費欄位供前端顯示。
+    V3: 增加對文字編碼問題的清洗與保護機制。
     """
     start_date, end_date = get_monthly_dates(year, month)
     active_emp_df = pd.read_sql_query(
@@ -29,10 +29,30 @@ def get_salary_report_for_editing(conn, year, month):
     """
     details_df = pd.read_sql_query(details_query, conn, params=(year, month))
 
+    # [核心修改] 資料清洗，處理潛在的編碼錯誤
+    # 這個函式會嘗試修復無效的UTF-8字元
+    def clean_text(x):
+        if isinstance(x, str):
+            # errors='replace' 會將無效字元替換為 '?'
+            return x.encode('utf-8', 'replace').decode('utf-8')
+        return x
+
+    if not details_df.empty:
+        # 清洗所有從資料庫讀取出的文字欄位
+        details_df['item_name'] = details_df['item_name'].apply(clean_text)
+    if not active_emp_df.empty:
+        active_emp_df['員工姓名'] = active_emp_df['員工姓名'].apply(clean_text)
+
+
     pivot_details = pd.DataFrame()
     if not details_df.empty:
-        pivot_details = details_df.pivot_table(index='employee_id', columns='item_name', values='amount').reset_index()
+        pivot_details = details_df.pivot_table(
+            index='employee_id', 
+            columns='item_name', 
+            values='amount'
+        ).reset_index()
 
+    # 後續的合併與計算邏輯保持不變...
     report_df = pd.merge(active_emp_df, salary_main_df, on='employee_id', how='left')
     if not pivot_details.empty:
         report_df = pd.merge(report_df, pivot_details, on='employee_id', how='left')
@@ -44,13 +64,11 @@ def get_salary_report_for_editing(conn, year, month):
         if item not in report_df.columns: report_df[item] = 0
     report_df.fillna(0, inplace=True)
     
-    # --- [核心修改] 合併勞健保費 ---
     report_df['勞健保'] = report_df.get('勞保費', 0) + report_df.get('健保費', 0)
     
-    # 移除獨立的勞保費和健保費，避免在UI上重複顯示
     if '勞保費' in item_types: del item_types['勞保費']
     if '健保費' in item_types: del item_types['健保費']
-    item_types['勞健保'] = 'deduction' # 將合併後的項目視為扣除項
+    item_types['勞健保'] = 'deduction'
 
     earning_cols = [c for c, t in item_types.items() if t == 'earning' and c in report_df.columns]
     deduction_cols = [c for c, t in item_types.items() if t == 'deduction' and c in report_df.columns]
