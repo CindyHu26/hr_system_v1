@@ -4,7 +4,6 @@ import pandas as pd
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-# 導入新架構的模組
 from services import bonus_scraper as scraper
 from services import bonus_logic as logic_bonus
 from db import queries_bonus as q_bonus
@@ -12,7 +11,11 @@ from db import queries_employee as q_emp
 
 def show_page(conn):
     st.header("🌀 業務獎金批次匯入")
-    st.info("此功能將會登入公司系統，抓取指定月份的收款紀錄，並依規則計算業務獎金後存入資料庫中繼站。")
+    st.info("此功能將登入公司系統，抓取指定月份的收款紀錄，並依規則計算業務獎金後存入資料庫中繼站。")
+
+    # 確保 session_state 中有 'bonus_detailed_view'
+    if 'bonus_detailed_view' not in st.session_state:
+        st.session_state.bonus_detailed_view = pd.DataFrame()
 
     st.subheader("步驟 1: 輸入系統資訊與查詢區間")
     with st.form("scrape_form"):
@@ -56,13 +59,11 @@ def show_page(conn):
             with st.spinner("正在處理明細並計算獎金..."):
                 summary_df, detailed_view_df = logic_bonus.process_and_calculate_bonuses(conn, all_details_df, year, month)
             
-            # 將計算結果與詳細資料存入 session state，方便後續使用
             st.session_state.bonus_summary = summary_df
             st.session_state.bonus_detailed_view = detailed_view_df
             st.success("獎金計算完成！")
             st.rerun()
 
-    # 如果 session 中有計算結果，則顯示
     if 'bonus_summary' in st.session_state:
         st.write("---")
         st.subheader("步驟 2: 計算結果預覽")
@@ -82,14 +83,51 @@ def show_page(conn):
                     with st.spinner("正在寫入資料庫..."):
                         count = q_bonus.save_bonuses_to_monthly_table(conn, year, month, summary_df)
                     st.success(f"成功將 {count} 筆獎金紀錄存入資料庫！")
-                    # 清除 session state 避免重複操作
                     del st.session_state.bonus_summary
                     del st.session_state.bonus_detailed_view
                     st.rerun()
                 except Exception as e:
                     st.error(f"存入資料庫時發生錯誤: {e}")
 
-        # **【核心修改】** 新增一個可展開的區塊來顯示詳細資料
-        with st.expander("點此查看完整抓取明細與計算過程"):
+        # **【核心修改】** 將明細顯示區塊改為可編輯、可刪除的互動介面
+        with st.expander("點此查看、修改或刪除抓取明細", expanded=True):
             detailed_view_df = st.session_state.get('bonus_detailed_view', pd.DataFrame())
-            st.dataframe(detailed_view_df)
+            
+            if not detailed_view_df.empty:
+                # 增加一個用於刪除的勾選框欄位
+                detailed_view_df["刪除"] = False
+                cols_to_show = ["刪除"] + [col for col in detailed_view_df.columns if col != "刪除"]
+                
+                # 使用 data_editor 讓表格可被編輯
+                edited_df = st.data_editor(
+                    detailed_view_df[cols_to_show], 
+                    key="detail_editor"
+                )
+                
+                c1, c2 = st.columns([1,1])
+                
+                if c1.button("🗑️ 刪除選中明細", use_container_width=True):
+                    # 找出被勾選為 '刪除' 的列
+                    rows_to_delete = edited_df[edited_df["刪除"] == True].index
+                    # 從 session state 中移除這些列
+                    st.session_state.bonus_detailed_view.drop(index=rows_to_delete, inplace=True)
+                    st.success(f"已標記刪除 {len(rows_to_delete)} 筆明細，請點擊重算更新總覽。")
+                    st.rerun()
+                
+                if c2.button("🔄 根據下方明細重算總覽", type="primary", use_container_width=True):
+                    with st.spinner("正在根據修改後的明細重新計算..."):
+                        # 將編輯器中當前的資料存回 session state
+                        st.session_state.bonus_detailed_view = edited_df.drop(columns=["刪除"])
+                        # 用更新後的明細資料，重新呼叫計算函式
+                        summary_df, _ = logic_bonus.process_and_calculate_bonuses(
+                            conn, 
+                            st.session_state.bonus_detailed_view.rename(columns={v: k for k, v in logic_bonus.COLUMN_MAP.items()}, errors='ignore'), # 將中文欄位轉回英文給函式
+                            year, 
+                            month
+                        )
+                        st.session_state.bonus_summary = summary_df
+                    st.success("總覽已更新！")
+                    st.rerun()
+
+            else:
+                st.info("目前沒有可供檢視的明細資料。")

@@ -14,7 +14,7 @@ WAIT_TIMEOUT = 60
 
 def fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback=None):
     """
-    【修正版】在抓取資料時，一併存入業務員姓名。
+    【修正版】新增過濾邏輯，自動排除作為表頭的資料列。
     """
     all_details = []
     not_found_employees = []
@@ -39,7 +39,6 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
             
             wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id=\"myform\"]/table/tbody/tr[12]/td/select")))
 
-            # --- 填寫表單 ---
             receipt_start_date_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id=\"CU00_BDATE1\"]")))
             receipt_start_date_input.clear()
             receipt_start_date_input.send_keys(start_date)
@@ -69,8 +68,11 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
             for row in data_rows:
                 cells = row.find_all('td')
                 if len(cells) >= 9:
+                    # **【關鍵修改】** 過濾掉作為表頭的列
+                    if cells[0].get_text(strip=True) == "序號":
+                        continue
+                    
                     row_data = [cell.get_text(strip=True) for cell in cells[:9]]
-                    # **【關鍵修改】** 將當前的業務員姓名(name)加入到這一列資料的最後
                     row_data.append(name)
                     all_details.append(row_data)
             
@@ -83,6 +85,5 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
     if not all_details:
         return pd.DataFrame(), not_found_employees
 
-    # **【關鍵修改】** 更新欄位標頭，新增 '業務員姓名' 欄
     headers = ["序號", "雇主姓名", "入境日", "外勞姓名", "帳款名稱", "帳款日", "應收金額", "收款日", "實收金額", "業務員姓名"]
     return pd.DataFrame(all_details, columns=headers), not_found_employees
