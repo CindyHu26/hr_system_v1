@@ -1,4 +1,4 @@
-# pages/bonus_batch.py
+# views/bonus_batch.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -8,6 +8,8 @@ from dateutil.relativedelta import relativedelta
 from services import bonus_scraper as scraper
 from services import bonus_logic as logic_bonus
 from db import queries_bonus as q_bonus
+# 【新增】匯入員工查詢模組
+from db import queries_employee as q_emp
 
 def show_page(conn):
     st.header("🌀 業務獎金批次匯入")
@@ -21,7 +23,6 @@ def show_page(conn):
         
         c3, c4 = st.columns(2)
         today = datetime.now()
-        # 計算上一個月的年份和月份
         last_month = today - relativedelta(months=1)
         year = c3.number_input("選擇獎金歸屬年份", min_value=2020, max_value=today.year + 1, value=last_month.year)
         month = c4.number_input("選擇獎金歸屬月份", min_value=1, max_value=12, value=last_month.month)
@@ -34,19 +35,26 @@ def show_page(conn):
         else:
             progress_bar = st.progress(0, text="準備開始...")
             
-            with st.spinner("正在登入並獲取業務員列表..."):
-                salespersons = scraper.get_salespersons_list(username, password)
-            
-            if not salespersons:
-                st.error("無法獲取業務員列表，請檢查帳號密碼或系統連線。")
+            # 【核心修改】從人資系統資料庫獲取員工名單，而不是從獎金系統
+            with st.spinner("正在從人資系統資料庫獲取員工名單..."):
+                employees_df = q_emp.get_all_employees(conn)
+                employee_names = employees_df['name_ch'].unique().tolist()
+
+            if not employee_names:
+                st.error("人資系統中沒有找到任何員工，無法進行查詢。")
                 return
 
             def progress_callback(message, percent):
                 progress_bar.progress(percent, text=message)
-
-            with st.spinner("正在遍歷所有業務員並抓取資料，請耐心等候..."):
-                all_details_df = scraper.fetch_all_bonus_data(username, password, year, month, salespersons, progress_callback)
             
+            # 【核心修改】將 HR 系統的員工名單傳遞給爬蟲
+            with st.spinner("正在遍歷所有業務員並抓取資料，請耐心等候..."):
+                all_details_df, not_found_employees = scraper.fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback)
+            
+            # 【新增】如果爬蟲回報有找不到的員工，在此處顯示警告
+            if not_found_employees:
+                st.warning(f"注意：在獎金系統的下拉選單中找不到以下員工，已自動跳過： {', '.join(not_found_employees)}")
+
             progress_bar.progress(1.0, text="資料抓取完成！正在進行獎金計算...")
             
             with st.spinner("正在處理明細並計算獎金..."):
@@ -76,7 +84,6 @@ def show_page(conn):
                     with st.spinner("正在寫入資料庫..."):
                         count = q_bonus.save_bonuses_to_monthly_table(conn, year, month, summary_df)
                     st.success(f"成功將 {count} 筆獎金紀錄存入資料庫！")
-                    # 清除 session state 避免重複操作
                     del st.session_state.bonus_summary
                     del st.session_state.bonus_detailed_view
                     st.rerun()
