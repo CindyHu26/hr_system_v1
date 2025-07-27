@@ -9,7 +9,8 @@ from bs4 import BeautifulSoup
 from utils.helpers import get_monthly_dates
 import config
 
-WAIT_TIMEOUT = 20
+# 【關鍵修改】將等待逾時時間從 20 秒延長到 60 秒
+WAIT_TIMEOUT = 60
 
 def get_salespersons_list(username, password):
     """登入系統並獲取業務人員的下拉選單列表。"""
@@ -18,7 +19,8 @@ def get_salespersons_list(username, password):
         options = webdriver.ChromeOptions()
         options.add_argument("--headless")
         driver = webdriver.Chrome(options=options)
-        wait = WebDriverWait(driver, 5)
+        # 登入頁面的等待時間可以短一些
+        wait = WebDriverWait(driver, 10)
 
         if not config.BONUS_SYSTEM_URL:
             raise ValueError("錯誤：請在 .env 檔案中設定 BONUS_SYSTEM_URL")
@@ -36,7 +38,7 @@ def get_salespersons_list(username, password):
             driver.quit()
 
 def fetch_all_bonus_data(username, password, year, month, salespersons, progress_callback=None):
-    """【優化版 V2】遍歷所有業務員，使用單一瀏覽器實例抓取業績資料，並在每次查詢後返回上一頁。"""
+    """【優化版 V3】遍歷所有業務員，使用單一瀏覽器實例抓取業績資料，增加等待時間並在每次查詢後返回上一頁。"""
     all_details = []
     _, end_date = get_monthly_dates(year, month)
     search_start_date = f"{year-1}-{month:02d}-01"
@@ -44,8 +46,9 @@ def fetch_all_bonus_data(username, password, year, month, salespersons, progress
     driver = None
     try:
         options = webdriver.ChromeOptions()
-        # options.add_argument("--headless") # 如果需要無頭模式，請取消註解
+        # options.add_argument("--headless")
         driver = webdriver.Chrome(options=options)
+        # 使用新的、更長的等待時間
         wait = WebDriverWait(driver, WAIT_TIMEOUT)
         
         if not config.BONUS_SYSTEM_URL:
@@ -58,7 +61,6 @@ def fetch_all_bonus_data(username, password, year, month, salespersons, progress
             if progress_callback:
                 progress_callback(f"({i+1}/{len(salespersons)}) 正在擷取 [{name}] 的資料...", (i + 1) / len(salespersons))
             
-            # 等待確保回到了主查詢頁面
             wait.until(EC.visibility_of_element_located((By.XPATH, "/html/body/form/table/tbody/tr[12]/td/select")))
 
             wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/table/tbody/tr[6]/td/input[1]"))).clear()
@@ -72,8 +74,9 @@ def fetch_all_bonus_data(username, password, year, month, salespersons, progress
             
             wait.until(EC.element_to_be_clickable((By.XPATH, "/html/body/form/table/tbody/tr[27]/td/input[1]"))).click()
             
+            # 用更長的逾時時間等待結果表格出現
             wait.until(EC.visibility_of_element_located((By.XPATH, "//td[contains(text(), '應收合計')]")))
-            time.sleep(1)
+            time.sleep(1) 
 
             soup = BeautifulSoup(driver.page_source, 'lxml')
             data_rows = soup.find_all('tr', class_=['bg1', 'bg2'])
@@ -83,8 +86,6 @@ def fetch_all_bonus_data(username, password, year, month, salespersons, progress
                 if len(cells) >= 9:
                     all_details.append([cell.get_text(strip=True) for cell in cells[:9]])
             
-            # **【關鍵修改】**
-            # 在抓取完資料後，模擬點擊瀏覽器的 "返回" 按鈕
             driver.back()
 
     finally:
