@@ -67,7 +67,6 @@ def show_page(conn):
                     
                     c1, c2 = st.columns(2)
                     
-                    # --- ▼▼▼ 核心修改處 (儲存邏輯) ▼▼▼ ---
                     if c1.form_submit_button("儲存變更", use_container_width=True):
                         if not name_edit.strip():
                             st.error("「項目名稱」為必填欄位！")
@@ -86,17 +85,12 @@ def show_page(conn):
                             except Exception as e:
                                 st.error(f"❌ 操作失敗：{e}")
                     
-                    # --- ▼▼▼ 核心修改處 (刪除邏輯) ▼▼▼ ---
                     if c2.form_submit_button("🔴 刪除此項目", type="primary", use_container_width=True):
                         try:
-                            # 刪除前再次確認，增加安全性
-                            st.warning(f"您確定要刪除「{item_data['name']}」嗎？此操作無法復原。")
-                            # 這裡可以加入二次確認的邏輯，但為了簡單起見，我們先直接執行
                             q_items.delete_salary_item(conn, item_id)
                             st.success(f"✅ 已成功刪除項目：{item_data['name']}")
                             st.rerun()
                         except Exception as e:
-                            # 顯示從資料庫層傳來的錯誤訊息 (例如：項目已被引用)
                             st.error(f"❌ 刪除失敗：{e}")
         else:
             st.info("目前沒有可操作的項目。")

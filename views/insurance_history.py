@@ -39,6 +39,10 @@ def show_page(conn):
         edited_df = st.data_editor(
             history_df.rename(columns=COLUMN_MAP),
             use_container_width=True,
+            column_config={
+                "加保日期": st.column_config.DateColumn("加保日期", format="YYYY-MM-DD"),
+                "退保日期": st.column_config.DateColumn("退保日期", format="YYYY-MM-DD"),
+            },
             disabled=["員工姓名", "加保單位"]
         )
         
@@ -51,15 +55,19 @@ def show_page(conn):
             else:
                 updates_count = 0
                 with st.spinner("正在儲存變更..."):
-                    edited_df_reverted = edited_df.rename(columns={v: k for k, v in COLUMN_MAP.items()})
                     for record_id, row in changed_rows.iterrows():
-                        update_data_raw = edited_df_reverted.loc[record_id].dropna().to_dict()
-                        if 'start_date' in update_data_raw and pd.notna(update_data_raw['start_date']):
-                            update_data_raw['start_date'] = update_data_raw['start_date'].strftime('%Y-%m-%d')
-                        if 'end_date' in update_data_raw and pd.notna(update_data_raw['end_date']):
-                            update_data_raw['end_date'] = update_data_raw['end_date'].strftime('%Y-%m-%d')
+                        update_data = row.dropna().to_dict()
+                        update_data_reverted = {
+                            (k for k, v in COLUMN_MAP.items() if v == col_name).__next__(): val 
+                            for col_name, val in update_data.items()
+                        }
+
+                        # 將 Timestamp 轉換為字串
+                        for key, value in update_data_reverted.items():
+                            if isinstance(value, (pd.Timestamp, date)):
+                                update_data_reverted[key] = value.strftime('%Y-%m-%d')
                         
-                        q_common.update_record(conn, 'employee_company_history', record_id, update_data_raw)
+                        q_common.update_record(conn, 'employee_company_history', record_id, update_data_reverted)
                         updates_count += 1
 
                 st.success(f"成功更新了 {updates_count} 筆加保紀錄！")
@@ -70,7 +78,6 @@ def show_page(conn):
         st.error(f"讀取加保歷史時發生錯誤: {e}")
         return
         
-    # --- ▼▼▼ 新增區塊：依公司查詢當月加保名單 ▼▼▼ ---
     st.write("---")
     st.subheader("🔍 依公司查詢當月在保名單")
     
@@ -97,14 +104,12 @@ def show_page(conn):
                 company_id = comp_options[selected_comp_name]
                 with st.spinner(f"正在查詢 {selected_comp_name} 在 {year}年{month}月 的在保員工..."):
                     insured_employees_df = q_ins.get_insured_employees_by_company_and_month(conn, company_id, year, month)
-                    # 將查詢結果存入 session state 以便重新整理後也能顯示
                     st.session_state['insured_employees_df'] = insured_employees_df
                     st.session_state['insured_employees_count'] = len(insured_employees_df)
                     st.session_state['last_query_company_info'] = f"{selected_comp_name} ({year}年{month}月)"
             else:
                 st.warning("請選擇一間公司進行查詢。")
 
-        # 根據 session state 顯示查詢結果
         if 'insured_employees_df' in st.session_state:
             count = st.session_state['insured_employees_count']
             info = st.session_state['last_query_company_info']
@@ -113,7 +118,6 @@ def show_page(conn):
 
     else:
         st.info("系統中尚無公司資料可供查詢。")
-    # --- ▲▲▲ 新增區塊結束 ▲▲▲ ---
 
     st.subheader("資料操作")
     tab1, tab2 = st.tabs([" ✨ 新增紀錄", "🚀 批次匯入 (Excel)"])

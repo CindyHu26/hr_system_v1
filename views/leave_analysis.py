@@ -66,7 +66,18 @@ def show_page(conn):
                 st.session_state['leave_check_results'],
                 use_container_width=True,
                 num_rows="dynamic",
-                key="leave_editor"
+                key="leave_editor",
+                # 新增 column_config 來處理 Datetime 格式
+                column_config={
+                    "Start Date": st.column_config.DatetimeColumn(
+                        "開始時間",
+                        format="YYYY-MM-DD HH:mm:ss"
+                    ),
+                    "End Date": st.column_config.DatetimeColumn(
+                        "結束時間",
+                        format="YYYY-MM-DD HH:mm:ss"
+                    )
+                }
             )
             st.session_state['leave_check_results'] = edited_df
 
@@ -80,20 +91,12 @@ def show_page(conn):
                     with st.spinner("正在寫入資料庫..."):
                         count = q_att.batch_insert_or_update_leave_records(conn, df_to_import)
                     st.success(f"成功匯入/更新了 {count} 筆請假紀錄！")
+                    # 清除暫存資料
+                    del st.session_state['leave_check_results']
+                    st.rerun()
                 except Exception as e:
                     st.error(f"匯入時發生錯誤: {e}")
                     st.code(traceback.format_exc())
-
-    if 'last_import_success' in st.session_state:
-        if st.session_state['last_import_success']:
-            st.success(f"成功匯入/更新了 {st.session_state['last_import_count']} 筆請假紀錄！")
-            st.markdown("#### 本次匯入紀錄預覽：")
-            st.dataframe(st.session_state['last_imported_df'], use_container_width=True)
-        if st.button("清除匯入結果訊息"):
-            del st.session_state['last_import_success']
-            del st.session_state['last_import_count']
-            del st.session_state['last_imported_df']
-            st.rerun()
 
     with tab2:
         st.subheader("交叉比對缺勤紀錄與假單")
@@ -110,7 +113,7 @@ def show_page(conn):
         if st.button("開始交叉比對", key="conflict_button", type="primary"):
             with st.spinner(f"正在分析 {year_conflict} 年 {month_conflict} 月的資料..."):
                 try:
-                    # 【核心修改】直接從 services 層獲取完整的比對結果
+                    # 直接從 services 層獲取完整的比對結果
                     # 為了顯示所有紀錄，我們需要一個新的函式來獲取完整的出勤資料
                     # 這裡我們假設 logic_leave.analyze_attendance_leave_conflicts 已經包含了所有員工的紀錄
                     all_records_df = logic_leave.analyze_attendance_leave_conflicts(conn, year_conflict, month_conflict)
@@ -125,7 +128,6 @@ def show_page(conn):
             
             result_df = st.session_state['conflict_analysis_result']
             
-            # 【核心修改】新增一個勾選框
             show_only_anomalies = st.checkbox("✔️ 僅顯示異常或提醒紀錄", value=True)
             
             if show_only_anomalies:
