@@ -33,5 +33,8 @@ HEALTH_INSURANCE_URL = "https://www.nhi.gov.tw/ch/cp-17545-f87bd-2576-1.html"
 # --- 請假單來源設定 (Google Sheet) ---
 DEFAULT_GSHEET_URL = os.getenv("GSHEET_URL", "請在此貼上您的Google Sheet分享連結或在.env中設定")
 
-# --- 獎金系統來源設定 ---
+# --- 業績獎金系統來源設定 ---
 BONUS_SYSTEM_URL = os.getenv("BONUS_SYSTEM_URL")
+
+# --- 績效獎金系統URL
+PERFORMANCE_BONUS_URL = os.getenv("PERFORMANCE_BONUS_URL")

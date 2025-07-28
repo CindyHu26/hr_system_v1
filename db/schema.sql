@@ -153,3 +153,17 @@ CREATE TABLE IF NOT EXISTS monthly_bonus_details (
 
 -- 提升依年月查詢獎金明細的速度
 CREATE INDEX IF NOT EXISTS idx_year_month_on_monthly_bonus_details ON monthly_bonus_details (year, month);
+
+-- 每月績效獎金中繼站
+CREATE TABLE IF NOT EXISTS monthly_performance_bonus (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    bonus_amount REAL NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(employee_id, year, month)
+);
+
+-- 提升依員工ID查詢績效獎金的速度
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_monthly_performance_bonus ON monthly_performance_bonus (employee_id);

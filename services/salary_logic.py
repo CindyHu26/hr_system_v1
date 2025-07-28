@@ -10,6 +10,7 @@ from db import queries_salary_base as q_base
 from db import queries_salary_records as q_records
 from db import queries_insurance as q_ins
 from db import queries_bonus as q_bonus
+from db import queries_performance_bonus as q_perf
 from db import queries_allowances as q_allow 
 from services import overtime_logic
 from views.annual_leave import calculate_leave_entitlement 
@@ -25,7 +26,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
     labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary, year, month)
     total_health_fee = 0
     
-    # [核心修改] 將傳入的數字直接轉為 float，以支援小數
+    # 將傳入的數字直接轉為 float，以支援小數
     d_under_18 = float(dependents_under_18 or 0)
     d_over_18 = float(dependents_over_18 or 0)
 
@@ -43,7 +44,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
         total_health_fee = person_fee + dependents_fee
         
     else: # 一般身分或特殊身分已過期
-        # [核心修改] 移除 min(..., 3) 的上限
+        # 移除 min(..., 3) 的上限
         total_dependents_count = d_under_18 + d_over_18
         # 總健保費 = 基數 * (1位本人 + N位眷屬)
         total_health_fee = health_fee_base * (1 + total_dependents_count)
@@ -53,7 +54,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 def calculate_salary_df(conn, year, month):
     """
     薪資試算引擎：根據各項資料計算全新的薪資草稿。
-    V12: 修正手動健保費的計算邏輯，確保其作為基數乘以眷屬數。
+    V13: [修改] 整合績效獎金。
     """
     TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
 
@@ -149,6 +150,10 @@ def calculate_salary_df(conn, year, month):
 
         bonus_result = q_bonus.get_employee_bonus(conn, emp_id, year, month)
         if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
+
+        perf_bonus_amount = q_perf.get_performance_bonus(conn, emp_id, year, month)
+        if perf_bonus_amount > 0:
+            details['績效獎金'] = int(round(perf_bonus_amount))
 
         is_insured = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
         if is_insured:
