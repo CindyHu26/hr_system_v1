@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import date # 引用 date
+from datetime import date, datetime # 引用 date 和 datetime
 from db import queries_employee as q_emp
 from db import queries_common as q_common
 from utils.helpers import to_date
@@ -32,6 +32,7 @@ TEMPLATE_COLUMNS = {
 def show_page(conn):
     st.header("👤 員工管理")
 
+    # --- 主畫面：可編輯的總覽表格 ---
     try:
         df_raw = q_emp.get_all_employees(conn)
         
@@ -65,6 +66,7 @@ def show_page(conn):
         )
 
         if st.button("💾 儲存員工資料變更", type="primary"):
+            # ... (此區塊維持不變) ...
             original_df_renamed = st.session_state.original_employee_df.rename(columns=COLUMN_MAP)
             changed_rows = edited_df[edited_df.ne(original_df_renamed)].dropna(how='all')
             
@@ -82,7 +84,6 @@ def show_page(conn):
                         if 'nationality' in update_data_reverted:
                             update_data_reverted['nationality'] = NATIONALITY_MAP.get(update_data_reverted['nationality'], 'TW')
                         
-                        # 在存入資料庫前，將所有日期/時間戳格式轉換為字串
                         for key, value in update_data_reverted.items():
                             if isinstance(value, (pd.Timestamp, date)):
                                 update_data_reverted[key] = value.strftime('%Y-%m-%d')
@@ -116,8 +117,14 @@ def show_page(conn):
             st.markdown("##### 個人與日期資料")
             c7, c8, c9 = st.columns(3)
             nationality_ch = c7.selectbox("國籍", list(NATIONALITY_MAP.keys()))
-            birth_date = c8.date_input("生日", value=None)
-            entry_date = c9.date_input("到職日", value=None)
+            
+            min_date_birth = date(1950, 1, 1)
+            min_date_general = date(2000, 1, 1)
+            max_date = date.today().replace(year=date.today().year + 10)
+
+            birth_date = c8.date_input("生日", value=None, min_value=min_date_birth, max_value=date.today())
+            entry_date = c9.date_input("到職日", value=None, min_value=min_date_general, max_value=max_date)
+            
             st.markdown("---")
             st.markdown("##### 聯絡資訊")
             c10, c11 = st.columns(2)
@@ -127,13 +134,17 @@ def show_page(conn):
             st.markdown("---")
             st.markdown("##### 特殊身份與日期")
             c12, c13 = st.columns(2)
-            arrival_date = c12.date_input("首次抵台日期 (外籍適用)", value=None)
-            resign_date = c13.date_input("離職日", value=None)
+            
+            arrival_date = c12.date_input("首次抵台日期 (外籍適用)", value=None, min_value=min_date_general, max_value=max_date)
+            resign_date = c13.date_input("離職日", value=None, min_value=min_date_general, max_value=max_date)
+
             st.markdown("---")
             st.markdown("##### 健保相關設定")
             c14, c15 = st.columns(2)
             nhi_status = c14.selectbox("健保狀態", ["一般", "低收入戶", "自理"])
-            nhi_status_expiry = c15.date_input("狀態效期", value=None)
+            
+            nhi_status_expiry = c15.date_input("狀態效期", value=None, min_value=min_date_general, max_value=max_date)
+            
             note = st.text_area("備註")
             if st.form_submit_button("確認新增"):
                 if not all([name_ch, hr_code, id_no]):
