@@ -1,4 +1,5 @@
 # services/report_generator.py
+# services/report_generator.py
 import pandas as pd
 import io
 from datetime import time, datetime
@@ -10,6 +11,7 @@ from openpyxl.worksheet.pagebreak import Break
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 
 from db import queries_attendance as q_att
 from db import queries_salary_records as q_records
@@ -173,11 +175,7 @@ def generate_attendance_excel(conn, year, month):
     return excel_file
 
 def _get_monthly_salary_data(conn, year, month):
-    """
-    獲取指定月份的薪資資料，並進行初步處理。
-    """
     report_df, item_types = q_records.get_salary_report_for_editing(conn, year, month)
-    
     final_df = report_df[report_df['status'] == 'final'].copy()
     
     if final_df.empty:
@@ -185,12 +183,15 @@ def _get_monthly_salary_data(conn, year, month):
 
     emp_df = q_emp.get_all_employees(conn)
     ins_df = q_ins.get_all_insurance_history(conn)
-    ins_df['start_date'] = pd.to_datetime(ins_df['start_date'])
-    latest_ins = ins_df.loc[ins_df.groupby('name_ch')['start_date'].idxmax()]
-    
-    final_df = pd.merge(final_df, emp_df[['id', 'dept']], left_on='employee_id', right_on='id', how='left')
-    final_df = pd.merge(final_df, latest_ins[['name_ch', 'company_name']], left_on='員工姓名', right_on='name_ch', how='left')
+    if not ins_df.empty:
+        ins_df['start_date'] = pd.to_datetime(ins_df['start_date'])
+        latest_ins = ins_df.loc[ins_df.groupby('name_ch')['start_date'].idxmax()]
+        final_df = pd.merge(final_df, latest_ins[['name_ch', 'company_name']], left_on='員工姓名', right_on='name_ch', how='left')
+    else:
+        final_df['company_name'] = ''
 
+    final_df = pd.merge(final_df, emp_df[['id', 'dept']], left_on='employee_id', right_on='id', how='left')
+    
     for col in list(item_types.keys()) + ['應付總額', '應扣總額', '實發薪資']:
         if col in final_df.columns:
             final_df[col] = pd.to_numeric(final_df[col], errors='coerce').fillna(0)
@@ -198,39 +199,48 @@ def _get_monthly_salary_data(conn, year, month):
     return final_df, item_types
 
 
-def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month): # <-- 【修正點 1】新增 conn 參數
-    """產生基礎薪資總表 (Excel)"""
+def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
     att_summary = q_att.get_monthly_attendance_summary(conn, year, month)
-    
     df_merged = pd.merge(df, att_summary, on='employee_id', how='left').fillna(0)
+
+    basic_earning_items = ['底薪', '加班費(延長工時)', '加班費(再延長工時)']
+    basic_deduction_items = ['勞健保', '借支', '事假', '病假', '遲到', '早退', '其他', '稅款']
+    
+    df_merged['應付合計_basic'] = df_merged[basic_earning_items].sum(axis=1)
+    df_merged['應扣合計_basic'] = df_merged[basic_deduction_items].sum(axis=1)
+    df_merged['合計_basic'] = df_merged['應付合計_basic'] + df_merged['應扣合計_basic']
 
     cols = {
         '員工姓名': '姓名', '員工編號': '編號', 'company_name': '加保', 'dept': '部門', '底薪': '底薪',
-        '加班費(延長工時)': '加班費', '加班費(再延長工時)': '加班費2', '應付總額': '應付合計',
+        '加班費(延長工時)': '加班費', '加班費(再延長工時)': '加班費2', 
+        '應付合計_basic': '應付合計',
         '勞健保': '勞健保', '借支': '借支', '事假': '事假', '病假': '病假', 
         'late_minutes': '遲到(分)', '遲到': '遲到', 'early_leave_minutes': '早退(分)', '早退': '早退', 
-        '其他': '其他', '稅款': '稅款', '應扣總額': '應扣合計', '實發薪資': '合計', 
+        '其他': '其他', '稅款': '稅款', 
+        '應扣合計_basic': '應扣合計',
+        '合計_basic': '合計',
         '勞退提撥(公司負擔)': '勞退提撥'
     }
     
     df_report = pd.DataFrame()
     for col_db, col_report in cols.items():
-        df_report[col_report] = df_merged.get(col_db, 0)
+        if col_db not in df_merged.columns:
+            df_merged[col_db] = 0
+        df_report[col_report] = df_merged[col_db]
     
-    # 計算事病假時數
-    # 避免底薪為0導致的除零錯誤
     hourly_rate = (df_merged['底薪'] / 240).replace(0, pd.NA)
     df_report['事假(時)'] = (df_report['事假'] / hourly_rate).abs().round(2).fillna(0)
     df_report['病假(時)'] = (df_report['病假'] / (hourly_rate * 0.5)).abs().round(2).fillna(0)
+    df_report['延長工時'] = (df_merged.get('overtime1_minutes', 0) / 60).round(2)
+    df_report['再延長工時'] = ((df_merged.get('overtime2_minutes', 0) + df_merged.get('overtime3_minutes', 0)) / 60).round(2)
 
     output = io.BytesIO()
     df_report.to_excel(output, index=False, sheet_name="薪資計算")
     output.seek(0)
-    return output.getvalue()
+    return output, df_report
 
 
 def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
-    """產生完整薪資總表 (Excel)"""
     df_report = df.copy()
     
     df_report['加班費'] = df_report.get('加班費(延長工時)', 0) + df_report.get('加班費(再延長工時)', 0)
@@ -254,66 +264,115 @@ def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
     return output.getvalue()
 
 
-def _generate_payslip_docx(df: pd.DataFrame, year: int, month: int, item_types: dict):
-    """根據範本為所有員工產生薪資單 (Word)"""
+def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
+    """【V5 最終修正版】使用固定表格結構，徹底解決 IndexError"""
     document = Document()
-    font = document.styles['Normal'].font
-    font.name = '標楷體'
+    sections = document.sections
+    for section in sections:
+        section.top_margin = Inches(0.5)
+        section.bottom_margin = Inches(0.5)
+        section.left_margin = Inches(0.7)
+        section.right_margin = Inches(0.7)
 
-    for index, emp_row in df.iterrows():
-        table_header = document.add_table(rows=2, cols=4)
-        table_header.cell(0, 0).text = str(year - 1911)
-        table_header.cell(0, 1).text = "年度"
-        table_header.cell(0, 2).text = str(month)
-        table_header.cell(0, 3).text = "月份薪資明細表"
-        table_header.cell(1, 0).text = "姓名"
-        table_header.cell(1, 1).text = emp_row.get('員工姓名', '')
-        table_header.cell(1, 2).text = "部門"
-        table_header.cell(1, 3).text = emp_row.get('dept', '')
+    document.styles['Normal'].font.name = '標楷體'
+    document.styles['Normal']._element.rPr.rFonts.set(qn('w:eastAsia'), '標楷體')
 
-        table_details = document.add_table(rows=1, cols=4)
-        hdr_cells = table_details.rows[0].cells
-        hdr_cells[0].text = '給付項目'
-        hdr_cells[1].text = '金額'
-        hdr_cells[2].text = '扣除項目'
-        hdr_cells[3].text = '金額'
+    def set_cell_properties(cell, text, size=10, bold=False):
+        cell.text = ""
+        p = cell.paragraphs[0]
+        p.paragraph_format.space_before = Pt(1)
+        p.paragraph_format.space_after = Pt(1)
+        run = p.add_run(str(text))
+        run.font.size = Pt(size)
+        run.font.name = '標楷體'
+        run.font.bold = bold
 
-        earnings = {'底薪': emp_row.get('底薪', 0)}
-        if emp_row.get('加班費(延長工時)', 0) != 0: earnings['加班費(延長)'] = emp_row['加班費(延長工時)']
-        if emp_row.get('加班費(再延長工時)', 0) != 0: earnings['加班費(再延長)'] = emp_row['加班費(再延長工時)']
-        for item, type in item_types.items():
-            if type == 'earning' and item not in earnings and emp_row.get(item, 0) != 0:
-                 earnings[item] = emp_row[item]
+    for i, emp_row in df_basic.iterrows():
+        base_salary = emp_row.get('底薪', 0)
         
-        deductions = {}
-        for item, type in item_types.items():
-            if type == 'deduction' and emp_row.get(item, 0) != 0:
-                deductions[item] = emp_row[item]
+        # --- 主表格 (固定13行) ---
+        table = document.add_table(rows=13, cols=5)
 
-        max_rows = max(len(earnings), len(deductions))
-        for i in range(max_rows):
-            row_cells = table_details.add_row().cells
-            if i < len(earnings):
-                item, amount = list(earnings.items())[i]
-                row_cells[0].text = item
-                row_cells[1].text = f"{int(amount):,}"
-            if i < len(deductions):
-                item, amount = list(deductions.items())[i]
-                row_cells[2].text = item
-                row_cells[3].text = f"{int(abs(amount)):,}"
+        # Row 0: 標題
+        cell = table.cell(0, 0)
+        cell.merge(table.cell(0, 4))
+        set_cell_properties(cell, f"{year - 1911} 年 {month} 月份薪資明細表", bold=True)
+        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Row 1: 姓名
+        set_cell_properties(table.cell(1, 0), "姓名:")
+        cell = table.cell(1, 1)
+        cell.merge(table.cell(1, 4))
+        set_cell_properties(cell, emp_row.get('姓名', ''))
+        
+        # Row 2: 應付金額
+        set_cell_properties(table.cell(2, 0), '應 付 金 額', bold=True)
+        set_cell_properties(table.cell(2, 1), '底薪')
+        set_cell_properties(table.cell(2, 2), f"{int(base_salary):,}")
+        
+        # Row 3 & 4: 加班費1
+        set_cell_properties(table.cell(3, 1), '加班費')
+        set_cell_properties(table.cell(3, 2), f"{int(emp_row.get('加班費', 0)):,}")
+        set_cell_properties(table.cell(3, 3), f"{base_salary}/30/8*1.34")
+        set_cell_properties(table.cell(4, 1), '延長工時')
+        set_cell_properties(table.cell(4, 3), f"{emp_row.get('延長工時', 0):.2f}H")
 
-        table_total = document.add_table(rows=3, cols=4)
-        table_total.cell(0, 0).text = "應付總額"
-        table_total.cell(0, 1).text = f"{int(emp_row.get('應付總額', 0)):,}"
-        table_total.cell(0, 2).text = "應扣總額"
-        table_total.cell(0, 3).text = f"{int(abs(emp_row.get('應扣總額', 0))):,}"
-        table_total.cell(1, 0).text = "實發薪資"
-        table_total.cell(1, 1).text = f"{int(emp_row.get('實發薪資', 0)):,}"
-        table_total.cell(2, 0).text = "備註"
-        table_total.cell(2, 0).merge(table_total.cell(2, 3))
+        # Row 5 & 6: 加班費2
+        set_cell_properties(table.cell(5, 1), '加班費')
+        set_cell_properties(table.cell(5, 2), f"{int(emp_row.get('加班費2', 0)):,}")
+        set_cell_properties(table.cell(5, 3), f"{base_salary}/30/8*1.67")
+        set_cell_properties(table.cell(6, 1), '再延長工時')
+        set_cell_properties(table.cell(6, 3), f"{emp_row.get('再延長工時', 0):.2f}H")
+        
+        # Row 7: 應付合計
+        set_cell_properties(table.cell(7, 1), '合計')
+        set_cell_properties(table.cell(7, 2), f"{int(emp_row.get('應付合計', 0)):,}")
+        
+        # Row 8: 應扣金額
+        set_cell_properties(table.cell(8, 0), '應 扣 金 額', bold=True)
+        
+        # 建立一個固定的扣除項目列表
+        deductions = [
+            {'key': '勞健保', 'formula': '', 'unit_key': '', 'unit': ''},
+            {'key': '借支', 'formula': '', 'unit_key': '', 'unit': ''},
+            {'key': '事假', 'formula': f'{base_salary}/30', 'unit_key': '事假(時)', 'unit': 'H'},
+            {'key': '病假', 'formula': f'{base_salary}/30/2', 'unit_key': '病假(時)', 'unit': 'H'},
+            {'key': '遲到', 'formula': f'{base_salary}/30/8/60', 'unit_key': '遲到(分)', 'unit': 'M'},
+            {'key': '早退', 'formula': f'{base_salary}/30/8/60', 'unit_key': '早退(分)', 'unit': 'M'},
+            {'key': '稅款', 'formula': '', 'unit_key': '', 'unit': ''},
+            {'key': '其他', 'formula': '', 'unit_key': '', 'unit': ''},
+        ]
+        
+        # 動態建立一個剛好大小的新表格來放扣除額
+        document.add_paragraph() 
+        deduction_table = document.add_table(rows=len(deductions) + 2, cols=5)
 
-        if index < len(df) - 1:
-            document.add_page_break()
+        for idx, item in enumerate(deductions):
+            amount = emp_row.get(item['key'], 0)
+            unit_val = emp_row.get(item['unit_key'], 0)
+            
+            set_cell_properties(deduction_table.cell(idx, 1), item['key'])
+            set_cell_properties(deduction_table.cell(idx, 2), f"{int(abs(amount)):,}" if amount != 0 else "-")
+            if item['formula']:
+                set_cell_properties(deduction_table.cell(idx, 3), item['formula'])
+            if item['unit_key']:
+                set_cell_properties(deduction_table.cell(idx, 4), f"{unit_val:.2f}{item['unit']}" if unit_val > 0 else f"-{item['unit']}")
+
+        # 扣除合計
+        set_cell_properties(deduction_table.cell(len(deductions), 1), '合計')
+        set_cell_properties(deduction_table.cell(len(deductions), 2), f"{int(emp_row.get('應扣合計', 0)):,}")
+        
+        # 實支金額
+        set_cell_properties(deduction_table.cell(len(deductions) + 1, 0), '實 支 金 額', bold=True)
+        set_cell_properties(deduction_table.cell(len(deductions) + 1, 1), f"{int(emp_row.get('合計', 0)):,}", bold=True)
+        set_cell_properties(deduction_table.cell(len(deductions) + 1, 2), f"勞退提撥 {int(emp_row.get('勞退提撥', 0)):,}")
+
+        # --- 分隔 ---
+        if i % 2 == 0:
+            document.add_paragraph(" ")
+        else:
+            if i < len(df_basic) - 1:
+                document.add_page_break()
 
     output = io.BytesIO()
     document.save(output)
@@ -322,18 +381,13 @@ def _generate_payslip_docx(df: pd.DataFrame, year: int, month: int, item_types: 
 
 
 def generate_monthly_salary_reports(conn, year, month):
-    """
-    主函式：產生所有月度薪資報表。
-    """
     final_df, item_types = _get_monthly_salary_data(conn, year, month)
-    
-    # 【修正點 2】將 conn 傳遞給子函式
-    basic_excel = _generate_basic_salary_excel(conn, final_df, year, month)
-    full_excel = _generate_full_salary_excel(final_df, item_types)
-    payslip_docx = _generate_payslip_docx(final_df, year, month, item_types)
+    basic_excel_file, basic_df_for_word = _generate_basic_salary_excel(conn, final_df, year, month)
+    full_excel_file = _generate_full_salary_excel(final_df, item_types)
+    payslip_docx_file = _generate_payslip_docx(basic_df_for_word, year, month)
     
     return {
-        "basic_excel": basic_excel,
-        "full_excel": full_excel,
-        "payslip_docx": payslip_docx
+        "basic_excel": basic_excel_file,
+        "full_excel": full_excel_file,
+        "payslip_docx": payslip_docx_file
     }

@@ -33,6 +33,9 @@ def show_page(conn):
         st.write("---")
         st.subheader("報表下載")
         
+        # 【核心修改】計算民國年
+        roc_year = year - 1911
+        
         c1_dl, c2_dl, c3_dl = st.columns(3)
 
         with c1_dl:
@@ -40,7 +43,7 @@ def show_page(conn):
             st.download_button(
                 label="📥 下載 Excel",
                 data=reports['basic_excel'],
-                file_name=f"薪資計算_{year}_{month:02d}.xlsx",
+                file_name=f"薪資計算_{roc_year}{month:02d}.xlsx", # <-- 修改檔名
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_basic"
             )
@@ -50,7 +53,7 @@ def show_page(conn):
             st.download_button(
                 label="📥 下載 Excel",
                 data=reports['full_excel'],
-                file_name=f"薪資計算(加)_{year}_{month:02d}.xlsx",
+                file_name=f"薪資計算(加)_{roc_year}{month:02d}.xlsx", # <-- 修改檔名
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_full"
             )
@@ -60,7 +63,7 @@ def show_page(conn):
             st.download_button(
                 label="📥 下載 Word",
                 data=reports['payslip_docx'],
-                file_name=f"薪資單_{year}_{month:02d}.docx",
+                file_name=f"薪資單_{roc_year}{month:02d}.docx", # <-- 修改檔名
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl_payslip"
             )

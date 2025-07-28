@@ -4,11 +4,12 @@
 """
 import pandas as pd
 from utils.helpers import get_monthly_dates
+from db import queries_insurance as q_ins
 
 def get_salary_report_for_editing(conn, year, month):
     """
     薪資報表產生器: 從資料庫讀取資料，並處理草稿/定版邏輯後呈現。
-    V3: 增加對文字編碼問題的清洗與保護機制。
+    V4: 【修正】修正勞健保費用加總的邏輯。
     """
     start_date, end_date = get_monthly_dates(year, month)
     active_emp_df = pd.read_sql_query(
@@ -29,20 +30,15 @@ def get_salary_report_for_editing(conn, year, month):
     """
     details_df = pd.read_sql_query(details_query, conn, params=(year, month))
 
-    # [核心修改] 資料清洗，處理潛在的編碼錯誤
-    # 這個函式會嘗試修復無效的UTF-8字元
     def clean_text(x):
         if isinstance(x, str):
-            # errors='replace' 會將無效字元替換為 '?'
             return x.encode('utf-8', 'replace').decode('utf-8')
         return x
 
     if not details_df.empty:
-        # 清洗所有從資料庫讀取出的文字欄位
         details_df['item_name'] = details_df['item_name'].apply(clean_text)
     if not active_emp_df.empty:
         active_emp_df['員工姓名'] = active_emp_df['員工姓名'].apply(clean_text)
-
 
     pivot_details = pd.DataFrame()
     if not details_df.empty:
@@ -52,7 +48,6 @@ def get_salary_report_for_editing(conn, year, month):
             values='amount'
         ).reset_index()
 
-    # 後續的合併與計算邏輯保持不變...
     report_df = pd.merge(active_emp_df, salary_main_df, on='employee_id', how='left')
     if not pivot_details.empty:
         report_df = pd.merge(report_df, pivot_details, on='employee_id', how='left')
@@ -61,11 +56,17 @@ def get_salary_report_for_editing(conn, year, month):
     item_types = pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
 
     for item in item_types.keys():
-        if item not in report_df.columns: report_df[item] = 0
+        if item not in report_df.columns:
+            report_df[item] = 0
     report_df.fillna(0, inplace=True)
     
-    report_df['勞健保'] = report_df.get('勞保費', 0) + report_df.get('健保費', 0)
+    # --- 【核心修改】使用更穩健的方式加總勞健保費用 ---
+    # 確保欄位存在且為數字格式
+    labor_fee = pd.to_numeric(report_df.get('勞保費', 0), errors='coerce').fillna(0)
+    health_fee = pd.to_numeric(report_df.get('健保費', 0), errors='coerce').fillna(0)
+    report_df['勞健保'] = labor_fee + health_fee
     
+    # 從項目類型字典中移除原始項目，並加入合併後的項目
     if '勞保費' in item_types: del item_types['勞保費']
     if '健保費' in item_types: del item_types['健保費']
     item_types['勞健保'] = 'deduction'
@@ -91,7 +92,8 @@ def get_salary_report_for_editing(conn, year, month):
 
     final_cols = ['employee_id', '員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實發薪資', '匯入銀行', '現金', '勞退提撥(公司負擔)']
     for col in final_cols:
-        if col not in report_df.columns: report_df[col] = 0
+        if col not in report_df.columns:
+            report_df[col] = 0
 
     return report_df[final_cols].sort_values(by='員工編號').reset_index(drop=True), item_types
 
@@ -128,18 +130,49 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
 
 
 def finalize_salary_records(conn, year, month, df: pd.DataFrame):
-    """將薪資紀錄定版，寫入總額與支付方式等最終資訊。"""
+    """【V3 修正版】加入匯入銀行與現金的特殊計算邏輯。"""
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
+    
     for _, row in df.iterrows():
         emp_id = emp_map.get(row['員工姓名'])
         if not emp_id: continue
+        
+        is_insured = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
+        net_salary = row.get('實發薪資', 0)
+        bank_transfer_amount = 0
+        
+        if not is_insured:
+            bank_transfer_amount = net_salary
+        else:
+            base_salary = row.get('底薪', 0)
+            overtime_1 = row.get('加班費(延長工時)', 0)
+            overtime_2 = row.get('加班費(再延長工時)', 0)
+            total_overtime = overtime_1 + overtime_2
+            
+            insurance_fee = row.get('勞健保', 0)
+            personal_leave = row.get('事假', 0)
+            sick_leave = row.get('病假', 0)
+            late_fee = row.get('遲到', 0)
+            early_leave_fee = row.get('早退', 0)
+            
+            bank_transfer_amount = base_salary + total_overtime + insurance_fee + personal_leave + sick_leave + late_fee + early_leave_fee
+
+        cash_amount = net_salary - bank_transfer_amount
+        
         params = {
-            # ...
-            'cash_amount': row.get('現金', 0), 'status': 'final',
+            'total_payable': row.get('應付總額', 0),
+            'total_deduction': row.get('應扣總額', 0),
+            'net_salary': net_salary,
+            'bank_transfer_amount': bank_transfer_amount,
+            'cash_amount': cash_amount,
+            'status': 'final',
             'employer_pension_contribution': row.get('勞退提撥(公司負擔)', 0),
-            'employee_id': emp_id, 'year': year, 'month': month
+            'employee_id': emp_id,
+            'year': year,
+            'month': month
         }
+        
         cursor.execute("""
             UPDATE salary SET
             total_payable = :total_payable, total_deduction = :total_deduction,
@@ -148,6 +181,7 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
             employer_pension_contribution = :employer_pension_contribution
             WHERE employee_id = :employee_id AND year = :year AND month = :month
         """, params)
+        
     conn.commit()
 
 def revert_salary_to_draft(conn, year, month, employee_ids: list):
