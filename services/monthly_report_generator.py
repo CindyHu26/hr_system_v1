@@ -36,7 +36,7 @@ def _get_monthly_salary_data(conn, year, month):
 
     final_df = pd.merge(final_df, emp_df[['id', 'dept']], left_on='employee_id', right_on='id', how='left')
     
-    for col in list(item_types.keys()) + ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金']:
+    for col in list(item_types.keys()) + ['應付總額', '應扣總額', '實發薪資', '匯入銀行', '現金']:
         if col in final_df.columns:
             final_df[col] = pd.to_numeric(final_df[col], errors='coerce').fillna(0)
             
@@ -93,7 +93,7 @@ def _write_styled_excel(df: pd.DataFrame, sheet_name: str, total_cols: list) -> 
 def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
     att_summary = q_att.get_monthly_attendance_summary(conn, year, month)
     df_merged = pd.merge(df, att_summary, on='employee_id', how='left').fillna(0)
-
+    
     basic_earning_items = ['底薪', '加班費(延長工時)', '加班費(再延長工時)']
     basic_deduction_items = ['勞健保', '借支', '事假', '病假', '遲到', '早退', '其他', '稅款']
     all_basic_items = basic_earning_items + basic_deduction_items
@@ -108,13 +108,13 @@ def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
     cols = {
         '員工姓名': '姓名', '員工編號': '編號', 'company_name': '加保單位', 'dept': '部門', '底薪': '底薪',
         '加班費(延長工時)': '加班費', '加班費(再延長工時)': '加班費2', 
-        '應付總額': '應付總額', # 維持欄位名稱
+        '應付總額': '應付總額',
         '勞健保': '勞健保', '借支': '借支', '事假': '事假', '病假': '病假', 
         'late_minutes': '遲到(分)', '遲到': '遲到', 'early_leave_minutes': '早退(分)', '早退': '早退', 
         '其他': '其他', '稅款': '稅款', 
-        '應扣總額': '應扣總額', # 維持欄位名稱
-        '實支金額': '實支金額', # 維持欄位名稱
-        '勞退提撥': '勞退提撥'
+        '應扣總額': '應扣總額',
+        '實支金額': '實支金額',
+        '勞退提撥': '勞退提撥' 
     }
     
     df_report = pd.DataFrame()
@@ -136,6 +136,8 @@ def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
 def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
     df_report = df.copy()
     
+    df_report.rename(columns={'實發薪資': '實支金額'}, inplace=True)
+    
     df_report['加班費'] = df_report.get('加班費(延長工時)', 0) + df_report.get('加班費(再延長工時)', 0)
 
     core_cols = ['員工姓名', '員工編號', 'company_name', 'dept']
@@ -151,7 +153,6 @@ def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
             
     df_report = df_report[final_cols]
     
-    # 核心修改：欄位中文化，並確保欄位名稱正確
     total_cols = [col for col in df_report.columns if col not in ['員工姓名', '員工編號', 'company_name', 'dept']]
     df_report.rename(columns={
         'company_name': '加保單位', 
@@ -196,21 +197,15 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
         earnings = [{'label': '底薪', 'key': '底薪', 'formula': None, 'unit_key': None}, {'label': '加班費(延長工時)', 'key': '加班費', 'formula': f"{base_salary}/30/8*1.34", 'unit_key': '延長工時', 'unit': 'H'}, {'label': '加班費(再延長工時)', 'key': '加班費2', 'formula': f"{base_salary}/30/8*1.67", 'unit_key': '再延長工時', 'unit': 'H'}]
         deductions = [{'label': '勞健保', 'key': '勞健保', 'formula': None, 'unit_key': None}, {'label': '借支', 'key': '借支', 'formula': None, 'unit_key': None}, {'label': '事假', 'key': '事假', 'formula': f'{base_salary}/30', 'unit_key': '事假(時)', 'unit': 'H'}, {'label': '病假', 'key': '病假', 'formula': f'{base_salary}/30/2', 'unit_key': '病假(時)', 'unit': 'H'}, {'label': '遲到', 'key': '遲到', 'formula': f'{base_salary}/30/8/60', 'unit_key': '遲到(分)', 'unit': 'M'}, {'label': '早退', 'key': '早退', 'formula': f'{base_salary}/30/8/60', 'unit_key': '早退(分)', 'unit': 'M'}, {'label': '稅款', 'key': '稅款', 'formula': None, 'unit_key': None}, {'label': '其他', 'key': '其他', 'formula': None, 'unit_key': None}]
 
-        num_item_rows = max(len(earnings), len(deductions))
+        num_item_rows = 8
+        
         table = document.add_table(rows=num_item_rows + 5, cols=6)
         table.style = 'Table Grid'
         
         widths = [Inches(1.5), Inches(0.6), Inches(1.55), Inches(1.5), Inches(0.6), Inches(1.55)]
-        tbl = table._tbl
-        tblGrid = tbl.first_child_found_in("w:tblGrid")
-        if tblGrid is None:
-            tblGrid = OxmlElement("w:tblGrid")
-            tbl.insert(0, tblGrid)
-        
-        for width in widths:
-            col = OxmlElement("w:gridCol")
-            col.set(qn("w:w"), str(width.twips))
-            tblGrid.append(col)
+        for row in table.rows:
+            for idx, width in enumerate(widths):
+                row.cells[idx].width = width
 
         table.cell(0, 0).merge(table.cell(0, 5))
         set_cell_text(table.cell(0, 0), f"{year - 1911} 年 {month} 月份薪資表", bold=True, align='CENTER', size=12)
@@ -237,7 +232,8 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
                     unit_val = emp_row.get(item['unit_key'], 0)
                     if unit_val > 0:
                         formula_text += f" ({unit_val:.2f}{item['unit']})"
-                set_cell_text(table.cell(r + 3, 2), formula_text if formula_text else "-", align='CENTER')
+
+                set_cell_text(table.cell(r + 3, 2), formula_text if formula_text else "-", align='CENTER', size=8)
 
             if r < len(deductions):
                 item = deductions[r]
@@ -250,18 +246,17 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
                     unit_val = emp_row.get(item['unit_key'], 0)
                     if unit_val > 0:
                         formula_text += f" ({unit_val:.2f}{item['unit']})"
-                set_cell_text(table.cell(r + 3, 5), formula_text if formula_text else "-", align='CENTER')
+
+                set_cell_text(table.cell(r + 3, 5), formula_text if formula_text else "-", align='CENTER', size=8)
 
         total_row_1 = num_item_rows + 3
         set_cell_text(table.cell(total_row_1, 0), '應付合計', bold=True)
-        # 使用 '應付總額' 來顯示合計
         set_cell_text(table.cell(total_row_1, 1), f"{int(emp_row.get('應付總額', 0)):,}", bold=True, align='RIGHT')
         set_cell_text(table.cell(total_row_1, 3), '應扣合計', bold=True)
         set_cell_text(table.cell(total_row_1, 4), f"{int(abs(emp_row.get('應扣總額', 0))):,}", bold=True, align='RIGHT')
         
         total_row_2 = num_item_rows + 4
         table.cell(total_row_2, 0).merge(table.cell(total_row_2, 2))
-        # 使用 '實支金額' 來顯示
         set_cell_text(table.cell(total_row_2, 0), f"實支金額： {int(emp_row.get('實支金額', 0)):,}", bold=True)
         table.cell(total_row_2, 3).merge(table.cell(total_row_2, 5))
         set_cell_text(table.cell(total_row_2, 3), f"勞退提撥： {int(emp_row.get('勞退提撥', 0)):,}")
@@ -278,9 +273,6 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
     return output.getvalue()
 
 def calculate_cash_denominations(cash_payout_list: list):
-    """
-    根據"每位"員工的現金發放金額，計算最優化的鈔票與硬幣兌換總數。
-    """
     if not cash_payout_list:
         return {}
     denominations = [1000, 500, 100, 50, 10, 5, 1]
