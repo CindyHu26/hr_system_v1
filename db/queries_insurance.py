@@ -168,3 +168,35 @@ def get_insurance_salary_level(conn, base_salary: float):
         return result[0]
     else:
         return base_salary
+    
+def get_insured_employees_by_company_and_month(conn, company_id, year, month):
+    """
+    查詢指定公司在特定月份的在保員工名單。
+    (V3: 在所有日期比較中使用 date() 函式，以應對不乾淨的日期格式)
+    """
+    if not company_id:
+        return pd.DataFrame()
+
+    month_start, month_end = get_monthly_dates(year, month)
+    
+    # 將所有進行比較的日期欄位和參數都用 date() 包起來
+    query = """
+    SELECT
+        e.hr_code as '員工編號',
+        e.name_ch as '員工姓名',
+        ech.start_date as '加保日期',
+        e.dept as '部門',
+        e.title as '職稱'
+    FROM employee e
+    JOIN employee_company_history ech ON e.id = ech.employee_id
+    WHERE ech.company_id = ?
+      -- 加保日在查詢月份的結束日之前
+      AND date(ech.start_date) <= date(?)
+      -- 退保日是空的，或是在查詢月份的開始日之後
+      AND (ech.end_date IS NULL OR ech.end_date = '' OR date(ech.end_date) >= date(?))
+      -- 員工離職日是空的，或是在查詢月份的開始日之後
+      AND (e.resign_date IS NULL OR e.resign_date = '' OR date(e.resign_date) >= date(?))
+    ORDER BY e.hr_code
+    """
+    params = (company_id, month_end, month_start, month_start)
+    return pd.read_sql_query(query, conn, params=params)
