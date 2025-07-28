@@ -9,6 +9,7 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 # 引用相關的資料庫查詢模組
 from db import queries_salary_records as q_records
@@ -43,7 +44,6 @@ def _get_monthly_salary_data(conn, year, month):
 
 # --- Excel 相關函式 ---
 def _write_styled_excel(df: pd.DataFrame, sheet_name: str, total_cols: list) -> io.BytesIO:
-    """將 DataFrame 寫入一個帶有格式化表頭和合計列的 Excel 檔案中。"""
     output = io.BytesIO()
     wb = Workbook()
     ws = wb.active
@@ -52,8 +52,8 @@ def _write_styled_excel(df: pd.DataFrame, sheet_name: str, total_cols: list) -> 
     for r in dataframe_to_rows(df, index=False, header=True):
         ws.append(r)
 
-    header_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid") # 淺藍色
-    total_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid") # 淺橘色
+    header_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+    total_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
     bold_font = Font(bold=True)
 
     for cell in ws[1]:
@@ -101,19 +101,19 @@ def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
         if item not in df_merged.columns:
             df_merged[item] = 0
 
-    df_merged['應付合計_basic'] = df_merged[basic_earning_items].sum(axis=1)
-    df_merged['應扣合計_basic'] = df_merged[basic_deduction_items].sum(axis=1)
-    df_merged['合計_basic'] = df_merged['應付合計_basic'] + df_merged['應扣合計_basic']
+    df_merged['應付總額'] = df_merged[basic_earning_items].sum(axis=1)
+    df_merged['應扣總額'] = df_merged[basic_deduction_items].sum(axis=1)
+    df_merged['實支金額'] = df_merged['應付總額'] + df_merged['應扣總額']
 
     cols = {
         '員工姓名': '姓名', '員工編號': '編號', 'company_name': '加保單位', 'dept': '部門', '底薪': '底薪',
         '加班費(延長工時)': '加班費', '加班費(再延長工時)': '加班費2', 
-        '應付合計_basic': '應付合計',
+        '應付總額': '應付總額', # 維持欄位名稱
         '勞健保': '勞健保', '借支': '借支', '事假': '事假', '病假': '病假', 
         'late_minutes': '遲到(分)', '遲到': '遲到', 'early_leave_minutes': '早退(分)', '早退': '早退', 
         '其他': '其他', '稅款': '稅款', 
-        '應扣合計_basic': '應扣合計',
-        '合計_basic': '合計',
+        '應扣總額': '應扣總額', # 維持欄位名稱
+        '實支金額': '實支金額', # 維持欄位名稱
         '勞退提撥': '勞退提撥'
     }
     
@@ -129,7 +129,7 @@ def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
     df_report['延長工時'] = (df_merged.get('overtime1_minutes', 0) / 60).round(2)
     df_report['再延長工時'] = ((df_merged.get('overtime2_minutes', 0) + df_merged.get('overtime3_minutes', 0)) / 60).round(2)
 
-    total_cols = ['底薪', '加班費', '加班費2', '應付合計', '勞健保', '借支', '事假', '病假', '遲到', '早退', '其他', '稅款', '應扣合計', '合計', '勞退提撥']
+    total_cols = ['底薪', '加班費', '加班費2', '應付總額', '勞健保', '借支', '事假', '病假', '遲到', '早退', '其他', '稅款', '應扣總額', '實支金額', '勞退提撥']
     excel_output = _write_styled_excel(df_report, "薪資計算", total_cols)
     return excel_output, df_report
 
@@ -151,16 +151,16 @@ def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
             
     df_report = df_report[final_cols]
     
+    # 核心修改：欄位中文化，並確保欄位名稱正確
     total_cols = [col for col in df_report.columns if col not in ['員工姓名', '員工編號', 'company_name', 'dept']]
-    df_report.rename(columns={'company_name': '加保單位', 'dept': '部門'}, inplace=True)
+    df_report.rename(columns={
+        'company_name': '加保單位', 
+        'dept': '部門',
+        '勞退提撥': '勞退提撥'
+    }, inplace=True)
     return _write_styled_excel(df_report, "薪資計算(加)", total_cols)
 
-# --- Word 薪資單相關函式 ---
 def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
-    """
-    【最終版：左右佈局 + 完整資訊】
-    產生左右結構、包含計算公式與時數的薪資單 Word 檔案。
-    """
     document = Document()
     sections = document.sections
     for section in sections:
@@ -193,33 +193,24 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
 
     for i, emp_row in df_basic.iterrows():
         base_salary = int(emp_row.get('底薪', 0))
-
-        earnings = [
-            {'label': '底薪', 'key': '底薪', 'formula': None, 'unit_key': None},
-            {'label': '加班費(延長工時)', 'key': '加班費', 'formula': f"{base_salary}/30/8*1.34", 'unit_key': '延長工時', 'unit': 'H'},
-            {'label': '加班費(再延長工時)', 'key': '加班費2', 'formula': f"{base_salary}/30/8*1.67", 'unit_key': '再延長工時', 'unit': 'H'}
-        ]
-        deductions = [
-            {'label': '勞健保', 'key': '勞健保', 'formula': None, 'unit_key': None},
-            {'label': '借支', 'key': '借支', 'formula': None, 'unit_key': None},
-            {'label': '事假', 'key': '事假', 'formula': f'{base_salary}/30', 'unit_key': '事假(時)', 'unit': 'H'},
-            {'label': '病假', 'key': '病假', 'formula': f'{base_salary}/30/2', 'unit_key': '病假(時)', 'unit': 'H'},
-            {'label': '遲到', 'key': '遲到', 'formula': f'{base_salary}/30/8/60', 'unit_key': '遲到(分)', 'unit': 'M'},
-            {'label': '早退', 'key': '早退', 'formula': f'{base_salary}/30/8/60', 'unit_key': '早退(分)', 'unit': 'M'},
-            {'label': '稅款', 'key': '稅款', 'formula': None, 'unit_key': None},
-            {'label': '其他', 'key': '其他', 'formula': None, 'unit_key': None}
-        ]
+        earnings = [{'label': '底薪', 'key': '底薪', 'formula': None, 'unit_key': None}, {'label': '加班費(延長工時)', 'key': '加班費', 'formula': f"{base_salary}/30/8*1.34", 'unit_key': '延長工時', 'unit': 'H'}, {'label': '加班費(再延長工時)', 'key': '加班費2', 'formula': f"{base_salary}/30/8*1.67", 'unit_key': '再延長工時', 'unit': 'H'}]
+        deductions = [{'label': '勞健保', 'key': '勞健保', 'formula': None, 'unit_key': None}, {'label': '借支', 'key': '借支', 'formula': None, 'unit_key': None}, {'label': '事假', 'key': '事假', 'formula': f'{base_salary}/30', 'unit_key': '事假(時)', 'unit': 'H'}, {'label': '病假', 'key': '病假', 'formula': f'{base_salary}/30/2', 'unit_key': '病假(時)', 'unit': 'H'}, {'label': '遲到', 'key': '遲到', 'formula': f'{base_salary}/30/8/60', 'unit_key': '遲到(分)', 'unit': 'M'}, {'label': '早退', 'key': '早退', 'formula': f'{base_salary}/30/8/60', 'unit_key': '早退(分)', 'unit': 'M'}, {'label': '稅款', 'key': '稅款', 'formula': None, 'unit_key': None}, {'label': '其他', 'key': '其他', 'formula': None, 'unit_key': None}]
 
         num_item_rows = max(len(earnings), len(deductions))
         table = document.add_table(rows=num_item_rows + 5, cols=6)
         table.style = 'Table Grid'
         
-        table.columns[0].width = Inches(1.5)  # 應付項目 (加寬)
-        table.columns[1].width = Inches(0.6)  # 金額 (縮窄)
-        table.columns[2].width = Inches(1.5)  # 計算方式/單位 (加寬)
-        table.columns[3].width = Inches(1.5)  # 應扣項目 (加寬)
-        table.columns[4].width = Inches(0.6)  # 金額 (縮窄)
-        table.columns[5].width = Inches(1.5)  # 計算方式/單位 (加寬)
+        widths = [Inches(1.5), Inches(0.6), Inches(1.55), Inches(1.5), Inches(0.6), Inches(1.55)]
+        tbl = table._tbl
+        tblGrid = tbl.first_child_found_in("w:tblGrid")
+        if tblGrid is None:
+            tblGrid = OxmlElement("w:tblGrid")
+            tbl.insert(0, tblGrid)
+        
+        for width in widths:
+            col = OxmlElement("w:gridCol")
+            col.set(qn("w:w"), str(width.twips))
+            tblGrid.append(col)
 
         table.cell(0, 0).merge(table.cell(0, 5))
         set_cell_text(table.cell(0, 0), f"{year - 1911} 年 {month} 月份薪資表", bold=True, align='CENTER', size=12)
@@ -263,13 +254,15 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
 
         total_row_1 = num_item_rows + 3
         set_cell_text(table.cell(total_row_1, 0), '應付合計', bold=True)
-        set_cell_text(table.cell(total_row_1, 1), f"{int(emp_row.get('應付合計', 0)):,}", bold=True, align='RIGHT')
+        # 使用 '應付總額' 來顯示合計
+        set_cell_text(table.cell(total_row_1, 1), f"{int(emp_row.get('應付總額', 0)):,}", bold=True, align='RIGHT')
         set_cell_text(table.cell(total_row_1, 3), '應扣合計', bold=True)
-        set_cell_text(table.cell(total_row_1, 4), f"{int(abs(emp_row.get('應扣合計', 0))):,}", bold=True, align='RIGHT')
+        set_cell_text(table.cell(total_row_1, 4), f"{int(abs(emp_row.get('應扣總額', 0))):,}", bold=True, align='RIGHT')
         
         total_row_2 = num_item_rows + 4
         table.cell(total_row_2, 0).merge(table.cell(total_row_2, 2))
-        set_cell_text(table.cell(total_row_2, 0), f"實支金額： {int(emp_row.get('合計', 0)):,}", bold=True)
+        # 使用 '實支金額' 來顯示
+        set_cell_text(table.cell(total_row_2, 0), f"實支金額： {int(emp_row.get('實支金額', 0)):,}", bold=True)
         table.cell(total_row_2, 3).merge(table.cell(total_row_2, 5))
         set_cell_text(table.cell(total_row_2, 3), f"勞退提撥： {int(emp_row.get('勞退提撥', 0)):,}")
         
@@ -284,36 +277,25 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
     output.seek(0)
     return output.getvalue()
 
-# --- 新增功能：現金兌換建議 ---
-def calculate_cash_denominations(total_cash_amount: int, num_employees: int):
+def calculate_cash_denominations(cash_payout_list: list):
     """
-    根據總現金和員工人數，建議最佳的鈔票與硬幣兌換數量。
+    根據"每位"員工的現金發放金額，計算最優化的鈔票與硬幣兌換總數。
     """
-    if total_cash_amount == 0 or num_employees == 0:
+    if not cash_payout_list:
         return {}
-
     denominations = [1000, 500, 100, 50, 10, 5, 1]
-    result = {d: 0 for d in denominations}
-    
-    # 為了方便找零，先預留一些百元鈔
-    num_hundreds_needed = min(num_employees, total_cash_amount // 100)
-    result[100] = num_hundreds_needed
-    remaining_amount = total_cash_amount - (num_hundreds_needed * 100)
-    
-    for d in denominations:
-        if remaining_amount <= 0: break
-        count = remaining_amount // d
-        if count > 0:
-            result[d] += count
-            remaining_amount -= count * d
-            
-    return result
+    total_counts = {d: 0 for d in denominations}
+    for amount in cash_payout_list:
+        remaining_amount = int(amount)
+        for d in denominations:
+            if remaining_amount <= 0: break
+            count = remaining_amount // d
+            if count > 0:
+                total_counts[d] += count
+                remaining_amount -= count * d
+    return total_counts
 
-# --- 主呼叫函式 ---
 def generate_monthly_salary_reports(conn, year, month):
-    """
-    產生所有月度薪資報表（兩種Excel、Word薪資單）的主函式。
-    """
     final_df, item_types = _get_monthly_salary_data(conn, year, month)
     
     basic_excel_file, basic_df_for_word = _generate_basic_salary_excel(conn, final_df, year, month)
@@ -321,13 +303,11 @@ def generate_monthly_salary_reports(conn, year, month):
     payslip_docx_file = _generate_payslip_docx(basic_df_for_word, year, month)
     
     cash_df = final_df[final_df['現金'] > 0]
-    total_cash = cash_df['現金'].sum()
-    num_cash_employees = len(cash_df)
+    cash_payout_list = cash_df['現金'].tolist()
     
     return {
         "basic_excel": basic_excel_file,
         "full_excel": full_excel_file,
         "payslip_docx": payslip_docx_file,
-        "total_cash": total_cash,
-        "num_cash_employees": num_cash_employees
+        "cash_payout_list": cash_payout_list
     }
