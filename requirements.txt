@@ -9,3 +9,4 @@ lxml
 python-dotenv
 python-dateutil
 webdriver-manager
+python-docx
