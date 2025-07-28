@@ -6,11 +6,17 @@ from utils.ui_components import create_batch_import_section
 from services import company_logic as logic_comp
 
 COLUMN_MAP = {
-    'name': '公司名稱', 'uniform_no': '統一編號', 'address': '地址',
+    'name': '公司名稱', 'uniform_no': '統一編號',
+    'debit_account': '薪轉帳號',
+    'enterprise_id': '企業編號(4碼)',
+    'address': '地址',
     'owner': '負責人', 'ins_code': '投保代號', 'note': '備註'
 }
 COMPANY_TEMPLATE_COLUMNS = {
-    'name': '公司名稱*', 'uniform_no': '統一編號*', 'address': '地址',
+    'name': '公司名稱*', 'uniform_no': '統一編號*',
+    'debit_account': '薪轉帳號',
+    'enterprise_id': '企業編號(4碼)',
+    'address': '地址',
     'owner': '負責人', 'ins_code': '投保代號', 'note': '備註'
 }
 
@@ -66,9 +72,14 @@ def show_page(conn):
             st.write("請填寫新公司資料 (*為必填)")
             c1, c2 = st.columns(2)
             new_data = {
-                'name': c1.text_input("公司名稱*"), 'uniform_no': c2.text_input("統一編號"),
-                'owner': c1.text_input("負責人"), 'ins_code': c2.text_input("投保代號"),
-                'address': st.text_input("地址"), 'note': st.text_area("備註")
+                'name': c1.text_input("公司名稱*"),
+                'uniform_no': c2.text_input("統一編號"),
+                'debit_account': c1.text_input("薪轉帳號 (12碼，不含'-')"),
+                'enterprise_id': c2.text_input("企業編號 (銀行用，4碼)", max_chars=4),
+                'owner': c1.text_input("負責人"),
+                'ins_code': c2.text_input("投保代號"),
+                'address': st.text_input("地址"),
+                'note': st.text_area("備註")
             }
             if st.form_submit_button("確認新增"):
                 if not new_data['name']:

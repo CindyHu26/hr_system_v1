@@ -20,7 +20,8 @@ from views import (
     nhi_summary,
     annual_leave,
     attendance_report,
-    salary_report # <-- 新增 import
+    bank_transfer_report,
+    salary_report
 )
 
 # --- 頁面設定 ---
@@ -56,10 +57,11 @@ PAGES_SALARY = {
 }
 
 PAGES_REPORTING = {
-    "💵 薪資月報與薪資單": salary_report,
-    "📊 年度薪資總表": annual_summary,
-    "📈 健保補充保費試算": nhi_summary,
     "📅 出勤日報表匯出": attendance_report,
+    "💵 薪資月報與薪資單": salary_report,
+    "🏦 銀行薪轉檔產製": bank_transfer_report,
+    "📊 年度薪資總表": annual_summary,
+    "📈 健保補充保費試算": nhi_summary
 }
 
 ALL_PAGES = {**PAGES_ADMIN, **PAGES_ATTENDANCE, **PAGES_SALARY, **PAGES_REPORTING}
@@ -77,7 +79,7 @@ page_groups = {
 selected_group = st.sidebar.selectbox("選擇功能區塊", list(page_groups.keys()))
 
 # [修改] 動態排序薪資與報表功能頁面
-if selected_group in ["薪資核心功能", "報表與分析"]:
+if selected_group in ["薪資核心功能"]:
     page_list = sorted(page_groups[selected_group])
 else:
     page_list = page_groups[selected_group]

@@ -14,8 +14,15 @@ CREATE TABLE IF NOT EXISTS employee (
 
 -- 公司（加保單位）表
 CREATE TABLE IF NOT EXISTS company (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, uniform_no TEXT, address TEXT,
-    owner TEXT, ins_code TEXT, note TEXT
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    uniform_no TEXT,
+    debit_account TEXT,
+    enterprise_id TEXT,
+    address TEXT,
+    owner TEXT,
+    ins_code TEXT,
+    note TEXT
 );
 
 -- 員工加保異動紀錄表
