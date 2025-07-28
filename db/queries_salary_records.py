@@ -20,7 +20,7 @@ def get_salary_report_for_editing(conn, year, month):
     if active_emp_df.empty:
         return pd.DataFrame(), {}
 
-    salary_main_df = pd.read_sql_query("SELECT *, employer_pension_contribution as '勞退提撥(公司負擔)' FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
+    salary_main_df = pd.read_sql_query("SELECT *, employer_pension_contribution as '勞退提撥' FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
     details_query = """
     SELECT s.employee_id, si.name as item_name, sd.amount
     FROM salary_detail sd
@@ -78,19 +78,19 @@ def get_salary_report_for_editing(conn, year, month):
     if draft_mask.any():
         report_df.loc[draft_mask, '應付總額'] = report_df.loc[draft_mask, earning_cols].sum(axis=1, numeric_only=True)
         report_df.loc[draft_mask, '應扣總額'] = report_df.loc[draft_mask, deduction_cols].sum(axis=1, numeric_only=True)
-        report_df.loc[draft_mask, '實發薪資'] = report_df.loc[draft_mask, '應付總額'] + report_df.loc[draft_mask, '應扣總額']
-        report_df.loc[draft_mask, '匯入銀行'] = report_df.loc[draft_mask, '實發薪資']
+        report_df.loc[draft_mask, '實支薪資'] = report_df.loc[draft_mask, '應付總額'] + report_df.loc[draft_mask, '應扣總額']
+        report_df.loc[draft_mask, '匯入銀行'] = report_df.loc[draft_mask, '實支薪資']
         report_df.loc[draft_mask, '現金'] = 0
 
     final_mask = report_df['status'] == 'final'
     if final_mask.any():
         report_df.loc[final_mask, '應付總額'] = report_df.loc[final_mask, 'total_payable']
         report_df.loc[final_mask, '應扣總額'] = report_df.loc[final_mask, 'total_deduction']
-        report_df.loc[final_mask, '實發薪資'] = report_df.loc[final_mask, 'net_salary']
+        report_df.loc[final_mask, '實支薪資'] = report_df.loc[final_mask, 'net_salary']
         report_df.loc[final_mask, '匯入銀行'] = report_df.loc[final_mask, 'bank_transfer_amount']
         report_df.loc[final_mask, '現金'] = report_df.loc[final_mask, 'cash_amount']
 
-    final_cols = ['employee_id', '員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實發薪資', '匯入銀行', '現金', '勞退提撥(公司負擔)']
+    final_cols = ['employee_id', '員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實支薪資', '匯入銀行', '現金', '勞退提撥']
     for col in final_cols:
         if col not in report_df.columns:
             report_df[col] = 0
@@ -107,7 +107,7 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
         emp_id = emp_map.get(row['員工姓名'])
         if not emp_id: continue
 
-        pension_contribution = row.get('勞退提撥(公司負擔)', 0)
+        pension_contribution = row.get('勞退提撥', 0)
         cursor.execute("""
             INSERT INTO salary (employee_id, year, month, status, employer_pension_contribution) 
             VALUES (?, ?, ?, 'draft', ?) 
@@ -139,7 +139,7 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
         if not emp_id: continue
         
         is_insured = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
-        net_salary = row.get('實發薪資', 0)
+        net_salary = row.get('實支薪資', 0)
         bank_transfer_amount = 0
         
         if not is_insured:
@@ -167,7 +167,7 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
             'bank_transfer_amount': bank_transfer_amount,
             'cash_amount': cash_amount,
             'status': 'final',
-            'employer_pension_contribution': row.get('勞退提撥(公司負擔)', 0),
+            'employer_pension_contribution': row.get('勞退提撥', 0),
             'employee_id': emp_id,
             'year': year,
             'month': month
@@ -303,7 +303,7 @@ def update_salary_preview_data(conn, year: int, month: int, df_to_update: pd.Dat
         if health_fee_id: updates_for_details.append((row['健保費'], salary_id, health_fee_id))
         
         # 準備 salary 主表的更新資料
-        updates_for_pension.append((row['勞退提撥(公司負擔)'], salary_id))
+        updates_for_pension.append((row['勞退提撥'], salary_id))
 
     try:
         # 使用 ON CONFLICT 語法一次性更新或插入 salary_detail

@@ -87,7 +87,7 @@ def get_salary_preview_data(conn, year: int, month: int):
         e.name_ch as '員工姓名',
         si.name as item_name,
         sd.amount,
-        s.employer_pension_contribution as '勞退提撥(公司負擔)'
+        s.employer_pension_contribution as '勞退提撥'
     FROM salary_detail sd
     JOIN salary s ON sd.salary_id = s.id
     JOIN salary_item si ON sd.salary_item_id = si.id
@@ -103,7 +103,7 @@ def get_salary_preview_data(conn, year: int, month: int):
         
     # 2. 將長格式資料轉換為寬格式（每個員工一行）
     preview_df = df_raw.pivot_table(
-        index=['employee_id', '員工姓名', '勞退提撥(公司負擔)'], 
+        index=['employee_id', '員工姓名', '勞退提撥'], 
         columns='item_name', 
         values='amount'
     ).reset_index()
@@ -111,7 +111,7 @@ def get_salary_preview_data(conn, year: int, month: int):
     # 3. 確保所有需要的欄位都存在，若無則補 0
     preview_cols = [
         'employee_id', '員工姓名', '底薪', 
-        '勞保費', '健保費', '勞退提撥(公司負擔)'
+        '勞保費', '健保費', '勞退提撥'
     ]
     for col in preview_cols:
         if col not in preview_df.columns:

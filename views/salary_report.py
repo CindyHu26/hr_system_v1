@@ -3,8 +3,10 @@ import streamlit as st
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import traceback
+import pandas as pd
 
-from services import report_generator as logic_report
+from services import monthly_report_generator as logic_monthly_report
+from services.monthly_report_generator import calculate_cash_denominations
 
 def show_page(conn):
     st.header("💵 薪資月報與薪資單")
@@ -19,9 +21,10 @@ def show_page(conn):
     if st.button("🚀 產生月度報表", type="primary"):
         try:
             with st.spinner(f"正在產生 {year}年{month}月 的三種薪資報表..."):
-                reports = logic_report.generate_monthly_salary_reports(conn, year, month)
+                # ▼▼▼ 修改：呼叫新的函式 ▼▼▼
+                reports = logic_monthly_report.generate_monthly_salary_reports(conn, year, month)
                 st.session_state.monthly_reports = reports
-                st.success("報表產生成功！現在您可以從下方按鈕下載。")
+                st.success("報表產生成功！")
         except ValueError as ve:
             st.warning(str(ve))
         except Exception as e:
@@ -33,7 +36,6 @@ def show_page(conn):
         st.write("---")
         st.subheader("報表下載")
         
-        # 【核心修改】計算民國年
         roc_year = year - 1911
         
         c1_dl, c2_dl, c3_dl = st.columns(3)
@@ -43,7 +45,7 @@ def show_page(conn):
             st.download_button(
                 label="📥 下載 Excel",
                 data=reports['basic_excel'],
-                file_name=f"薪資計算_{roc_year}{month:02d}.xlsx", # <-- 修改檔名
+                file_name=f"薪資計算_{roc_year}{month:02d}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_basic"
             )
@@ -53,7 +55,7 @@ def show_page(conn):
             st.download_button(
                 label="📥 下載 Excel",
                 data=reports['full_excel'],
-                file_name=f"薪資計算(加)_{roc_year}{month:02d}.xlsx", # <-- 修改檔名
+                file_name=f"薪資計算(加)_{roc_year}{month:02d}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_full"
             )
@@ -63,7 +65,27 @@ def show_page(conn):
             st.download_button(
                 label="📥 下載 Word",
                 data=reports['payslip_docx'],
-                file_name=f"薪資單_{roc_year}{month:02d}.docx", # <-- 修改檔名
+                file_name=f"薪資單_{roc_year}{month:02d}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl_payslip"
             )
+        
+        # --- 現金兌換建議 ---
+        total_cash = reports.get("total_cash", 0)
+        num_cash_employees = reports.get("num_cash_employees", 0)
+
+        if total_cash > 0 and num_cash_employees > 0:
+            st.write("---")
+            st.subheader("🏦 現金發薪兌換建議")
+            
+            st.info(f"本月共有 **{num_cash_employees}** 位員工需要發放現金，總金額為 **{int(total_cash):,}** 元。")
+            
+            denominations = calculate_cash_denominations(int(total_cash), num_cash_employees)
+            
+            # 將結果轉為 DataFrame 方便顯示
+            df_cash = pd.DataFrame({
+                "幣別": [f"{k} 元" for k in denominations.keys()],
+                "建議兌換數量 (張/個)": list(denominations.values())
+            })
+            
+            st.table(df_cash)

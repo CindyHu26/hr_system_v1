@@ -126,7 +126,7 @@ def calculate_salary_df(conn, year, month):
 
             details['勞保費'] = -final_labor_fee
             details['健保費'] = -final_health_fee
-            details['勞退提撥(公司負擔)'] = int(pension_override) if pension_override is not None else int(round(insurance_salary * 0.06))
+            details['勞退提撥'] = int(pension_override) if pension_override is not None else int(round(insurance_salary * 0.06))
             
         if emp['nationality'] and emp['nationality'] != 'TW':
             entry_date = datetime.strptime(emp['entry_date'], '%Y-%m-%d').date()
