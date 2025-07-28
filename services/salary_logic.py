@@ -18,7 +18,6 @@ from views.annual_leave import calculate_leave_entitlement
 def calculate_single_employee_insurance(conn, insurance_salary, dependents_under_18, dependents_over_18, nhi_status, nhi_status_expiry, year, month):
     """
     計算單一員工應負擔的勞健保費，分別返回勞保與健保費用。
-    V4: 支援小數眷屬且不設人數上限，並修正低收入戶邏輯。
     """
     if not insurance_salary or insurance_salary <= 0:
         return 0, 0
@@ -26,7 +25,6 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
     labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary, year, month)
     total_health_fee = 0
     
-    # 將傳入的數字直接轉為 float，以支援小數
     d_under_18 = float(dependents_under_18 or 0)
     d_over_18 = float(dependents_over_18 or 0)
 
@@ -34,19 +32,12 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
     
     if nhi_status == '自理':
         total_health_fee = 0
-        
     elif nhi_status == '低收入戶' and not is_expired:
-        # --- 低收入戶計算邏輯 (支援小數) ---
         person_fee = health_fee_base * 0.5
-        # 18歲以上眷屬保費減半
         dependents_fee = d_over_18 * health_fee_base * 0.5
-        # 18歲以下全額補助，費用為0
         total_health_fee = person_fee + dependents_fee
-        
-    else: # 一般身分或特殊身分已過期
-        # 移除 min(..., 3) 的上限
+    else:
         total_dependents_count = d_under_18 + d_over_18
-        # 總健保費 = 基數 * (1位本人 + N位眷屬)
         total_health_fee = health_fee_base * (1 + total_dependents_count)
         
     return int(round(labor_fee)), int(round(total_health_fee))
@@ -54,7 +45,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 def calculate_salary_df(conn, year, month):
     """
     薪資試算引擎：根據各項資料計算全新的薪資草稿。
-    V13: [修改] 整合績效獎金。
+    V14: [修正] 確保績效獎金的讀取方式與業務獎金一致。
     """
     TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
 
@@ -149,11 +140,14 @@ def calculate_salary_df(conn, year, month):
         if special_ot_pay > 0: details['津貼加班'] = special_ot_pay
 
         bonus_result = q_bonus.get_employee_bonus(conn, emp_id, year, month)
-        if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
+        if bonus_result:
+            details['業務獎金'] = int(round(bonus_result['bonus_amount']))
 
-        perf_bonus_amount = q_perf.get_performance_bonus(conn, emp_id, year, month)
-        if perf_bonus_amount > 0:
-            details['績效獎金'] = int(round(perf_bonus_amount))
+        # 【核心修改】修正績效獎金的讀取方式
+        perf_bonus_result = q_perf.get_performance_bonus(conn, emp_id, year, month)
+        if perf_bonus_result:
+            # get_performance_bonus 現在只回傳一個數字，所以可以直接用
+            details['績效獎金'] = int(round(perf_bonus_result))
 
         is_insured = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
         if is_insured:
