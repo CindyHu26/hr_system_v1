@@ -13,7 +13,8 @@ from views import (
     insurance_grade_management, 
     salary_base_history,
     allowance_setting,          
-    bonus_batch,    
+    bonus_batch,
+    performance_bonus,    
     salary_calculation,            
     annual_summary,             
     nhi_summary,                
@@ -48,6 +49,7 @@ PAGES_SALARY = {
     "🏦 勞健保級距管理": insurance_grade_management,
     "1️⃣ 薪資基準與保費管理": salary_base_history,
     "➕ 員工常態薪資項設定": allowance_setting,
+    "🏆 績效獎金計算": performance_bonus,
     "🌀 業務獎金批次匯入": bonus_batch,
     "2️⃣ 薪資單產生與鎖定": salary_calculation,
 }
@@ -71,9 +73,15 @@ page_groups = {
 
 selected_group = st.sidebar.selectbox("選擇功能區塊", list(page_groups.keys()))
 
+# [修改] 動態排序薪資功能頁面，讓數字開頭的排在前面
+if selected_group == "薪資核心功能":
+    page_list = sorted(page_groups[selected_group])
+else:
+    page_list = page_groups[selected_group]
+
 selected_page_name = st.sidebar.radio(
     f"--- {selected_group} ---",
-    page_groups[selected_group],
+    page_list, # <-- 修改此處
     label_visibility="collapsed"
 )
 
