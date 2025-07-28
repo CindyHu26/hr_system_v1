@@ -13,11 +13,18 @@ def show_page(conn):
     st.info("此功能將分步執行：抓取數據 -> 確認人數 -> 分配與微調 -> 存檔。")
 
     # --- Session State 初始化 ---
-    # 用於儲存跨步驟的資料
     if 'perf_bonus_step' not in st.session_state:
         st.session_state.perf_bonus_step = 1
     if 'perf_bonus_data' not in st.session_state:
         st.session_state.perf_bonus_data = {}
+
+    # --- 【新增】顯示來自其他步驟的提示訊息 ---
+    if 'perf_bonus_message' in st.session_state:
+        msg = st.session_state.perf_bonus_message
+        if msg['type'] == 'warning':
+            st.warning(msg['text'])
+        # 顯示後就清除，避免重複顯示
+        del st.session_state.perf_bonus_message
 
     # --- 檢查 URL 設定 ---
     if not config.PERFORMANCE_BONUS_URL:
@@ -48,13 +55,11 @@ def show_page(conn):
                 with st.spinner("正在登入外部系統並抓取數據..."):
                     try:
                         target_count = logic_perf.fetch_target_count(username, password, year, month)
-                        # 將抓取到的資料存入 session state
                         st.session_state.perf_bonus_data = {
                             'year': year, 'month': month,
-                            'fetched_count': target_count,
-                            'final_count': target_count # 預設最終人數等於抓取人數
+                            'fetched_count': target_count, 'final_count': target_count
                         }
-                        st.session_state.perf_bonus_step = 2 # 進入下一步
+                        st.session_state.perf_bonus_step = 2
                         st.rerun()
                     except Exception as e:
                         st.error(f"抓取數據時發生錯誤：{e}")
@@ -67,11 +72,8 @@ def show_page(conn):
 
         st.success(f"✅ 系統成功抓取到目標人數為: **{data['fetched_count']}** 人")
         
-        # 【核心修改】讓人資可以手動修改人數
         final_count = st.number_input(
-            "請確認或手動修正最終用於計算的人數:",
-            min_value=0,
-            value=data['final_count']
+            "請確認或手動修正最終用於計算的人數:", min_value=0, value=data['final_count']
         )
         st.session_state.perf_bonus_data['final_count'] = final_count
         
@@ -84,7 +86,11 @@ def show_page(conn):
                 try:
                     eligible_df = logic_perf.get_eligible_employees(conn, data['year'], data['month'])
                     if eligible_df.empty:
-                        st.warning("注意：該月份在打卡系統中沒有找到任何出勤紀錄，無法分配獎金。")
+                        # 【核心修改】將警告訊息存入 session state
+                        st.session_state.perf_bonus_message = {
+                            "type": "warning",
+                            "text": f"注意：在 {data['year']} 年 {data['month']} 月中找不到任何出勤紀錄，無法分配獎金。請先至「出勤紀錄管理」頁面匯入該月份的打卡資料。"
+                        }
                         st.session_state.perf_bonus_step = 1 # 退回第一步
                     else:
                         eligible_df['bonus_amount'] = bonus_per_person
@@ -105,21 +111,17 @@ def show_page(conn):
         st.subheader(f"步驟 3: 微調 {data['year']} 年 {data['month']} 月的獎金分配並存檔")
         st.info("您可以在下表中手動修改單一員工的獎金金額。修改完成後，請點擊最下方的按鈕儲存。")
         
-        # 【核心修改】使用 data_editor 讓人資可以修改每個人的獎金
         edited_df = st.data_editor(
             data['distribution_df'],
             column_config={
-                "employee_id": None, # 隱藏 employee_id
+                "employee_id": None,
                 "hr_code": st.column_config.TextColumn("員工編號", disabled=True),
                 "name_ch": st.column_config.TextColumn("員工姓名", disabled=True),
                 "bonus_amount": st.column_config.NumberColumn(
-                    "績效獎金金額",
-                    min_value=0,
-                    format="%d 元"
+                    "績效獎金金額", min_value=0, format="%d 元"
                 ),
             },
-            use_container_width=True,
-            hide_index=True
+            use_container_width=True, hide_index=True
         )
 
         st.markdown("---")
@@ -130,10 +132,8 @@ def show_page(conn):
         if c1.button("💾 儲存最終獎金分配", type="primary", use_container_width=True):
             with st.spinner("正在將最終結果寫入資料庫..."):
                 try:
-                    # 使用修改後的 DataFrame 進行儲存
                     saved_count = logic_perf.save_final_bonuses(conn, data['year'], data['month'], edited_df)
                     st.success(f"成功儲存了 {saved_count} 筆績效獎金紀錄！")
-                    # 清理 session state，完成流程
                     st.session_state.perf_bonus_step = 1
                     st.session_state.perf_bonus_data = {}
                     st.rerun()
@@ -142,7 +142,6 @@ def show_page(conn):
 
         if c2.button("返回上一步修改人數", use_container_width=True):
             st.session_state.perf_bonus_step = 2
-            # 保留已修改的分配表，但下一步會重新計算，所以刪除
             if 'distribution_df' in st.session_state.perf_bonus_data:
                 del st.session_state.perf_bonus_data['distribution_df']
             st.rerun()
