@@ -36,5 +36,5 @@ DEFAULT_GSHEET_URL = os.getenv("GSHEET_URL", "請在此貼上您的Google Sheet�
 # --- 業績獎金系統來源設定 ---
 BONUS_SYSTEM_URL = os.getenv("BONUS_SYSTEM_URL")
 
-# --- 績效獎金系統URL
+# --- 績效獎金系統URL ---
 PERFORMANCE_BONUS_URL = os.getenv("PERFORMANCE_BONUS_URL")
