@@ -70,7 +70,7 @@ ALL_PAGES = {**PAGES_ADMIN, **PAGES_ATTENDANCE, **PAGES_SALARY, **PAGES_REPORTIN
 st.sidebar.title("HRIS 人資系統 v1.0")
 
 page_groups = {
-    "基礎資料管理": list(PAGES_ADMIN.keys()),
+    "基本資料管理": list(PAGES_ADMIN.keys()),
     "出勤與假務": list(PAGES_ATTENDANCE.keys()),
     "薪資核心功能": list(PAGES_SALARY.keys()),
     "報表與分析": list(PAGES_REPORTING.keys())

@@ -1,11 +1,11 @@
-# pages/salary_item_management.py
+# views/salary_item_management.py
 import streamlit as st
 import pandas as pd
 import sqlite3
 
 from db import queries_salary_items as q_items
 from utils.ui_components import create_batch_import_section
-from services import salary_item_logic as logic_items # [新增] 匯入新的 logic 檔案
+from services import salary_item_logic as logic_items
 
 def show_page(conn):
     """
@@ -24,7 +24,6 @@ def show_page(conn):
 
     st.write("---")
 
-    # --- [核心修改] 將手動操作和批次匯入改為使用頁籤 ---
     tab1, tab2, tab3 = st.tabs([" ✨ 新增項目", "✏️ 修改/刪除項目", "🚀 批次匯入 (Excel)"])
 
     with tab1:
@@ -52,7 +51,7 @@ def show_page(conn):
     with tab2:
         if not items_df_raw.empty:
             item_list = {f"{row['name']} (ID: {row['id']})": row['id'] for _, row in items_df_raw.iterrows()}
-            selected_item_key = st.selectbox("選擇要操作的項目", options=item_list.keys(), index=None)
+            selected_item_key = st.selectbox("選擇要操作的項目", options=list(item_list.keys()), index=None, placeholder="請選擇一個薪資項目...")
 
             if selected_item_key:
                 item_id = item_list[selected_item_key]
@@ -67,12 +66,38 @@ def show_page(conn):
                     is_active_edit = st.checkbox("啟用此項目", value=bool(item_data.get('is_active', True)))
                     
                     c1, c2 = st.columns(2)
+                    
+                    # --- ▼▼▼ 核心修改處 (儲存邏輯) ▼▼▼ ---
                     if c1.form_submit_button("儲存變更", use_container_width=True):
-                        # ... (儲存邏輯)
-                        pass
+                        if not name_edit.strip():
+                            st.error("「項目名稱」為必填欄位！")
+                        else:
+                            update_data = {
+                                'name': name_edit.strip(),
+                                'type': type_edit,
+                                'is_active': is_active_edit
+                            }
+                            try:
+                                q_items.update_salary_item(conn, item_id, update_data)
+                                st.success(f"✅ 成功更新項目：{name_edit}")
+                                st.rerun()
+                            except sqlite3.IntegrityError:
+                                st.error(f"❌ 操作失敗：項目名稱「{name_edit.strip()}」可能已存在。")
+                            except Exception as e:
+                                st.error(f"❌ 操作失敗：{e}")
+                    
+                    # --- ▼▼▼ 核心修改處 (刪除邏輯) ▼▼▼ ---
                     if c2.form_submit_button("🔴 刪除此項目", type="primary", use_container_width=True):
-                        # ... (刪除邏輯)
-                        pass
+                        try:
+                            # 刪除前再次確認，增加安全性
+                            st.warning(f"您確定要刪除「{item_data['name']}」嗎？此操作無法復原。")
+                            # 這裡可以加入二次確認的邏輯，但為了簡單起見，我們先直接執行
+                            q_items.delete_salary_item(conn, item_id)
+                            st.success(f"✅ 已成功刪除項目：{item_data['name']}")
+                            st.rerun()
+                        except Exception as e:
+                            # 顯示從資料庫層傳來的錯誤訊息 (例如：項目已被引用)
+                            st.error(f"❌ 刪除失敗：{e}")
         else:
             st.info("目前沒有可操作的項目。")
 
