@@ -38,3 +38,8 @@ BONUS_SYSTEM_URL = os.getenv("BONUS_SYSTEM_URL")
 
 # --- 績效獎金系統URL ---
 PERFORMANCE_BONUS_URL = os.getenv("PERFORMANCE_BONUS_URL")
+
+NHI_BONUS_ITEMS = [
+    '津貼', '津貼加班', '特休未休', '主管津貼', 
+    '仲介師', '加薪', '補助', '業務獎金', '績效獎金'
+]

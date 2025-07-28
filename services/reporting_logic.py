@@ -118,3 +118,56 @@ def get_salary_preview_data(conn, year: int, month: int):
             preview_df[col] = 0
             
     return preview_df[preview_cols]
+
+def calculate_nhi_personal_bonus_for_period(conn, year: int, start_month: int, end_month: int):
+    """
+    (通用版) 試算每位員工在指定期間內，因高額獎金應繳納的健保補充保費。
+    """
+    # 1. 獲取所有員工在指定期間的薪資明細
+    salary_details_query = """
+    SELECT
+        s.employee_id,
+        e.name_ch,
+        si.name as item_name,
+        sd.amount
+    FROM salary_detail sd
+    JOIN salary s ON sd.salary_id = s.id
+    JOIN salary_item si ON sd.salary_item_id = si.id
+    JOIN employee e ON s.employee_id = e.id
+    WHERE s.year = ? AND s.status = 'final' AND s.month BETWEEN ? AND ?
+    """
+    df_details = pd.read_sql_query(salary_details_query, conn, params=(year, start_month, end_month))
+
+    if df_details.empty:
+        return pd.DataFrame()
+
+    # 2. 篩選出屬於獎金性質的項目
+    bonus_items = config.NHI_BONUS_ITEMS
+    df_bonus = df_details[df_details['item_name'].isin(bonus_items)]
+    
+    # 3. 按員工計算期間內的獎金總額
+    period_bonus_summary = df_bonus.groupby(['employee_id', 'name_ch'])['amount'].sum().reset_index()
+    period_bonus_summary.rename(columns={'amount': '期間獎金總額'}, inplace=True)
+
+    # 4. 獲取員工在期間結束時的投保薪資作為計算基準
+    emp_ids = period_bonus_summary['employee_id'].tolist()
+    insured_salaries_map = q_base.get_batch_employee_insurance_salary(conn, emp_ids, year, end_month)
+    
+    period_bonus_summary['投保薪資'] = period_bonus_summary['employee_id'].map(insured_salaries_map).fillna(0)
+
+    # 5. 計算補充保費
+    period_bonus_summary['計費門檻'] = period_bonus_summary['投保薪資'] * config.NHI_BONUS_MULTIPLIER
+    
+    period_bonus_summary['應計費金額'] = period_bonus_summary.apply(
+        lambda row: max(0, row['期間獎金總額'] - row['計費門檻']),
+        axis=1
+    )
+    
+    period_bonus_summary['應繳補充保費'] = (period_bonus_summary['應計費金額'] * config.NHI_SUPPLEMENT_RATE).round().astype(int)
+
+    # 6. 整理最終輸出的 DataFrame
+    result_df = period_bonus_summary[[
+        'name_ch', '期間獎金總額', '投保薪資', '計費門檻', '應計費金額', '應繳補充保費'
+    ]].rename(columns={'name_ch': '員工姓名'})
+
+    return result_df[result_df['應繳補充保費'] > 0].sort_values(by='應繳補充保費', ascending=False)
