@@ -35,3 +35,10 @@ node_modules/
 .venv/
 env/
 venv/
+
+# python virtual environment
+*.venv
+*.bat
+build/
+dist/
+*.spec
