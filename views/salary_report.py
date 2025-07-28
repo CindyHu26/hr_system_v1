@@ -71,21 +71,23 @@ def show_page(conn):
             )
         
         # --- 現金兌換建議 ---
-        total_cash = reports.get("total_cash", 0)
-        num_cash_employees = reports.get("num_cash_employees", 0)
-
-        if total_cash > 0 and num_cash_employees > 0:
+        cash_payout_list = reports.get("cash_payout_list", [])
+        
+        if cash_payout_list:
             st.write("---")
             st.subheader("🏦 現金發薪兌換建議")
             
+            total_cash = sum(cash_payout_list)
+            num_cash_employees = len(cash_payout_list)
+            
             st.info(f"本月共有 **{num_cash_employees}** 位員工需要發放現金，總金額為 **{int(total_cash):,}** 元。")
             
-            denominations = calculate_cash_denominations(int(total_cash), num_cash_employees)
+            # 呼叫新的現金計算函式，傳入每個人的金額列表
+            denominations = calculate_cash_denominations(cash_payout_list)
             
-            # 將結果轉為 DataFrame 方便顯示
             df_cash = pd.DataFrame({
                 "幣別": [f"{k} 元" for k in denominations.keys()],
-                "建議兌換數量 (張/個)": list(denominations.values())
+                "建議兌換總數 (張/個)": list(denominations.values())
             })
             
-            st.table(df_cash)
+            st.table(df_cash[df_cash["建議兌換總數 (張/個)"] > 0]) # 只顯示數量大於0的

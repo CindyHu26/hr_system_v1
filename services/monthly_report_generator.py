@@ -35,7 +35,7 @@ def _get_monthly_salary_data(conn, year, month):
 
     final_df = pd.merge(final_df, emp_df[['id', 'dept']], left_on='employee_id', right_on='id', how='left')
     
-    for col in list(item_types.keys()) + ['應付總額', '應扣總額', '實支薪資', '匯入銀行', '現金']:
+    for col in list(item_types.keys()) + ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金']:
         if col in final_df.columns:
             final_df[col] = pd.to_numeric(final_df[col], errors='coerce').fillna(0)
             
@@ -141,7 +141,7 @@ def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
     core_cols = ['員工姓名', '員工編號', 'company_name', 'dept']
     earning_cols = sorted([k for k, v in item_types.items() if v == 'earning' and '加班費' not in k and k != '底薪'])
     deduction_cols = sorted([k for k, v in item_types.items() if v == 'deduction' and k != '勞健保'])
-    summary_cols = ['應付總額', '應扣總額', '實支薪資', '匯入銀行', '現金', '勞退提撥']
+    summary_cols = ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金', '勞退提撥']
     
     final_cols = core_cols + ['底薪', '加班費'] + earning_cols + ['勞健保'] + deduction_cols + summary_cols
     
@@ -214,12 +214,12 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
         table = document.add_table(rows=num_item_rows + 5, cols=6)
         table.style = 'Table Grid'
         
-        table.columns[0].width = Inches(1.4)
-        table.columns[1].width = Inches(0.8)
-        table.columns[2].width = Inches(1.45)
-        table.columns[3].width = Inches(1.4)
-        table.columns[4].width = Inches(0.8)
-        table.columns[5].width = Inches(1.45)
+        table.columns[0].width = Inches(1.5)  # 應付項目 (加寬)
+        table.columns[1].width = Inches(0.6)  # 金額 (縮窄)
+        table.columns[2].width = Inches(1.5)  # 計算方式/單位 (加寬)
+        table.columns[3].width = Inches(1.5)  # 應扣項目 (加寬)
+        table.columns[4].width = Inches(0.6)  # 金額 (縮窄)
+        table.columns[5].width = Inches(1.5)  # 計算方式/單位 (加寬)
 
         table.cell(0, 0).merge(table.cell(0, 5))
         set_cell_text(table.cell(0, 0), f"{year - 1911} 年 {month} 月份薪資表", bold=True, align='CENTER', size=12)

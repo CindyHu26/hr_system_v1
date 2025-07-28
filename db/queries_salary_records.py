@@ -78,19 +78,19 @@ def get_salary_report_for_editing(conn, year, month):
     if draft_mask.any():
         report_df.loc[draft_mask, '應付總額'] = report_df.loc[draft_mask, earning_cols].sum(axis=1, numeric_only=True)
         report_df.loc[draft_mask, '應扣總額'] = report_df.loc[draft_mask, deduction_cols].sum(axis=1, numeric_only=True)
-        report_df.loc[draft_mask, '實支薪資'] = report_df.loc[draft_mask, '應付總額'] + report_df.loc[draft_mask, '應扣總額']
-        report_df.loc[draft_mask, '匯入銀行'] = report_df.loc[draft_mask, '實支薪資']
+        report_df.loc[draft_mask, '實支金額'] = report_df.loc[draft_mask, '應付總額'] + report_df.loc[draft_mask, '應扣總額']
+        report_df.loc[draft_mask, '匯入銀行'] = report_df.loc[draft_mask, '實支金額']
         report_df.loc[draft_mask, '現金'] = 0
 
     final_mask = report_df['status'] == 'final'
     if final_mask.any():
         report_df.loc[final_mask, '應付總額'] = report_df.loc[final_mask, 'total_payable']
         report_df.loc[final_mask, '應扣總額'] = report_df.loc[final_mask, 'total_deduction']
-        report_df.loc[final_mask, '實支薪資'] = report_df.loc[final_mask, 'net_salary']
+        report_df.loc[final_mask, '實支金額'] = report_df.loc[final_mask, 'net_salary']
         report_df.loc[final_mask, '匯入銀行'] = report_df.loc[final_mask, 'bank_transfer_amount']
         report_df.loc[final_mask, '現金'] = report_df.loc[final_mask, 'cash_amount']
 
-    final_cols = ['employee_id', '員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實支薪資', '匯入銀行', '現金', '勞退提撥']
+    final_cols = ['employee_id', '員工姓名', '員工編號', 'status'] + list(item_types.keys()) + ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金', '勞退提撥']
     for col in final_cols:
         if col not in report_df.columns:
             report_df[col] = 0
@@ -139,7 +139,7 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
         if not emp_id: continue
         
         is_insured = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
-        net_salary = row.get('實支薪資', 0)
+        net_salary = row.get('實支金額', 0)
         bank_transfer_amount = 0
         
         if not is_insured:
