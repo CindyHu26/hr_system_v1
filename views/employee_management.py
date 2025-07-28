@@ -1,7 +1,8 @@
-# pages/employee_management.py
+# views/employee_management.py
 import streamlit as st
 import pandas as pd
 import sqlite3
+from datetime import date # 引用 date
 from db import queries_employee as q_emp
 from db import queries_common as q_common
 from utils.helpers import to_date
@@ -31,11 +32,9 @@ TEMPLATE_COLUMNS = {
 def show_page(conn):
     st.header("👤 員工管理")
 
-    # --- 主畫面：可編輯的總覽表格 ---
     try:
         df_raw = q_emp.get_all_employees(conn)
         
-        # 預處理 DataFrame
         df_processed = df_raw.copy()
         date_cols = ['entry_date', 'birth_date', 'arrival_date', 'resign_date', 'nhi_status_expiry']
         for col in date_cols:
@@ -49,11 +48,15 @@ def show_page(conn):
         
         st.info("您可以直接在下表中修改資料，完成後點擊表格下方的「儲存變更」按鈕。")
         
-        # 使用 data_editor 顯示表格，並進行欄位配置
         edited_df = st.data_editor(
             df_processed.rename(columns=COLUMN_MAP),
             use_container_width=True,
             column_config={
+                "到職日": st.column_config.DateColumn("到職日", format="YYYY-MM-DD"),
+                "生日": st.column_config.DateColumn("生日", format="YYYY-MM-DD"),
+                "首次抵台日": st.column_config.DateColumn("首次抵台日", format="YYYY-MM-DD"),
+                "離職日": st.column_config.DateColumn("離職日", format="YYYY-MM-DD"),
+                "狀態效期": st.column_config.DateColumn("狀態效期", format="YYYY-MM-DD"),
                 "性別": st.column_config.SelectboxColumn("性別", options=["男", "女"]),
                 "國籍": st.column_config.SelectboxColumn("國籍", options=list(NATIONALITY_MAP.keys())),
                 "健保狀態": st.column_config.SelectboxColumn("健保狀態", options=["一般", "低收入戶", "自理"]),
@@ -63,7 +66,6 @@ def show_page(conn):
 
         if st.button("💾 儲存員工資料變更", type="primary"):
             original_df_renamed = st.session_state.original_employee_df.rename(columns=COLUMN_MAP)
-            # 找出有變更的列
             changed_rows = edited_df[edited_df.ne(original_df_renamed)].dropna(how='all')
             
             if changed_rows.empty:
@@ -73,15 +75,18 @@ def show_page(conn):
                 with st.spinner("正在儲存變更..."):
                     for record_id, row in changed_rows.iterrows():
                         update_data = row.dropna().to_dict()
-                        # 將顯示用的中文欄位名，轉回資料庫用的英文欄位名
                         update_data_reverted = {
                             (k for k, v in COLUMN_MAP.items() if v == col_name).__next__(): val 
                             for col_name, val in update_data.items()
                         }
-                        # 處理國籍代碼轉換
                         if 'nationality' in update_data_reverted:
                             update_data_reverted['nationality'] = NATIONALITY_MAP.get(update_data_reverted['nationality'], 'TW')
                         
+                        # 在存入資料庫前，將所有日期/時間戳格式轉換為字串
+                        for key, value in update_data_reverted.items():
+                            if isinstance(value, (pd.Timestamp, date)):
+                                update_data_reverted[key] = value.strftime('%Y-%m-%d')
+
                         q_common.update_record(conn, 'employee', record_id, update_data_reverted)
                         updates_count += 1
                 st.success(f"成功更新了 {updates_count} 位員工的資料！")
@@ -92,12 +97,10 @@ def show_page(conn):
         st.error(f"讀取或處理員工資料時發生錯誤: {e}")
         return
 
-    # --- 功能頁籤：新增與批次匯入 ---
     st.subheader("資料操作")
     tab1, tab2 = st.tabs([" ✨ 新增員工", "🚀 批次匯入 (Excel)"])
 
     with tab1:
-        # 新增員工的 form 內容保持不變
         with st.form("add_employee_form", clear_on_submit=True):
             st.write("請填寫新員工資料 (*為必填)")
             st.markdown("##### 基本資料")
@@ -138,7 +141,7 @@ def show_page(conn):
                 else:
                     new_data = {'name_ch': name_ch, 'hr_code': hr_code, 'id_no': id_no,'dept': dept, 'title': title, 'gender': gender,'nationality': NATIONALITY_MAP[nationality_ch],'birth_date': birth_date, 'entry_date': entry_date,'phone': phone, 'bank_account': bank_account, 'address': address,'arrival_date': arrival_date, 'resign_date': resign_date,'nhi_status': nhi_status, 'nhi_status_expiry': nhi_status_expiry,'note': note}
                     try:
-                        cleaned_data = {k: (v if v else None) for k, v in new_data.items()}
+                        cleaned_data = {k: (v if pd.notna(v) and v != '' else None) for k, v in new_data.items()}
                         q_common.add_record(conn, 'employee', cleaned_data)
                         st.success(f"成功新增員工：{new_data['name_ch']}")
                         st.rerun()
