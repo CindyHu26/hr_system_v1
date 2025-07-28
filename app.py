@@ -14,7 +14,7 @@ from views import (
     salary_base_history,
     allowance_setting,          
     bonus_batch,
-    performance_bonus,    
+    performance_bonus,
     salary_calculation,            
     annual_summary,             
     nhi_summary,                
@@ -44,14 +44,15 @@ PAGES_ATTENDANCE = {
     "📖 請假紀錄總覽": leave_history,
     "🏖️ 年度特休計算": annual_leave,
 }
+# 【核心修改】依照您的要求重新排序並更換圖標
 PAGES_SALARY = {
+    "1️⃣ 薪資基準與保費管理": salary_base_history,
+    "2️⃣ 績效獎金計算": performance_bonus,
+    "3️⃣ 業務獎金批次匯入": bonus_batch,
+    "4️⃣ 薪資單產生與鎖定": salary_calculation,
     "⚙️ 薪資項目管理": salary_item_management,
     "🏦 勞健保級距管理": insurance_grade_management,
-    "1️⃣ 薪資基準與保費管理": salary_base_history,
     "➕ 員工常態薪資項設定": allowance_setting,
-    "🏆 績效獎金計算": performance_bonus,
-    "🌀 業務獎金批次匯入": bonus_batch,
-    "2️⃣ 薪資單產生與鎖定": salary_calculation,
 }
 PAGES_REPORTING = {
     "📊 年度薪資總表": annual_summary,
@@ -73,7 +74,7 @@ page_groups = {
 
 selected_group = st.sidebar.selectbox("選擇功能區塊", list(page_groups.keys()))
 
-# [修改] 動態排序薪資功能頁面，讓數字開頭的排在前面
+# 【核心修改】動態排序薪資功能頁面，讓數字開頭的排在前面
 if selected_group == "薪資核心功能":
     page_list = sorted(page_groups[selected_group])
 else:
@@ -81,7 +82,7 @@ else:
 
 selected_page_name = st.sidebar.radio(
     f"--- {selected_group} ---",
-    page_list, # <-- 修改此處
+    page_list,
     label_visibility="collapsed"
 )
 
