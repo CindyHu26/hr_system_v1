@@ -2,9 +2,21 @@
 import sqlite3
 import streamlit as st
 from pathlib import Path
+import sys # 引用 sys 模組
+
+# 判斷程式是在開發環境執行還是在打包後的 .exe 環境執行
+if getattr(sys, 'frozen', False):
+    # 如果是 .exe 環境 (sys.frozen 會是 True)
+    # 將基礎路徑設定為 .exe 檔案所在的資料夾
+    base_path = Path(sys.executable).parent
+else:
+    # 如果是開發環境 (直接執行 .py 檔)
+    # 將基礎路徑設定為專案的根目錄
+    base_path = Path(__file__).parent.parent
 
 # --- 資料庫設定 ---
-DATA_DIR = Path(__file__).parent.parent / "data"
+# 將所有路徑都基於上面判斷出的 base_path
+DATA_DIR = base_path / "data"
 DB_PATH = DATA_DIR / "hr_system.db"
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
