@@ -19,10 +19,6 @@ DEFAULT_COLS = ["序號", "雇主姓名", "入境日", "外勞姓名", "帳款�
 
 # --- Excel 產生器 (維持不變) ---
 def generate_bonus_excel(df: pd.DataFrame) -> io.BytesIO:
-    """
-    將獎金明細 DataFrame 轉換為 Excel 檔案。
-    如果有多位員工，則每位員工一個獨立的工作表。
-    """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         salespeople = df['業務員姓名'].unique()
@@ -56,13 +52,11 @@ def generate_bonus_excel(df: pd.DataFrame) -> io.BytesIO:
 def show_page(conn):
     st.header("🌀 業務獎金管理")
 
-    # --- Session State 初始化 ---
     if 'bonus_details_df' not in st.session_state:
         st.session_state.bonus_details_df = pd.DataFrame(columns=DEFAULT_COLS)
     if 'bonus_summary_df' not in st.session_state:
         st.session_state.bonus_summary_df = pd.DataFrame()
 
-    # --- 頁面主要篩選器 ---
     st.info("請先選擇要處理的獎金月份。")
     c1, c2, c3 = st.columns([2, 1, 1])
     today = datetime.now()
@@ -70,20 +64,22 @@ def show_page(conn):
     year = c2.number_input("選擇年份", min_value=2020, max_value=today.year + 1, value=last_month.year, key="main_year")
     month = c3.number_input("選擇月份", min_value=1, max_value=12, value=last_month.month, key="main_month")
 
-    # --- 功能區塊 ---
     tab1, tab2, tab3 = st.tabs(["📝 獎金明細維護 (草稿)", "📊 獎金總覽計算", "📖 歷史紀錄與匯出 (最終版)"])
 
-    # --- TAB 1: 獎金明細維護 ---
     with tab1:
         st.subheader("步驟 1: 編輯獎金明細 (草稿)")
 
         if st.button(f"讀取 {year} 年 {month} 月的草稿"):
             with st.spinner("正在讀取草稿..."):
                 draft_df = q_bonus.get_bonus_details_by_month(conn, year, month, status='draft')
+                # --- 【核心修改】在讀取後立刻進行日期格式轉換 ---
+                date_cols = ['入境日', '帳款日', '收款日']
+                for col in date_cols:
+                    if col in draft_df.columns:
+                        draft_df[col] = pd.to_datetime(draft_df[col], errors='coerce').dt.date
                 st.session_state.bonus_details_df = draft_df
-                st.info(f"已載入 {len(draft_df)} 筆草稿紀錄。如果為空，您可以從外部系統抓取或手動新增。")
+                st.info(f"已載入 {len(draft_df)} 筆草稿紀錄。")
 
-        # 【新功能】預先載入員工選項供下拉選單使用
         employee_list = q_emp.get_all_employees(conn)['name_ch'].unique().tolist()
 
         st.write("您可以在下表中直接修改、刪除或新增獎金項目。完成所有編輯後，請點擊「💾 儲存草稿」。")
@@ -107,7 +103,6 @@ def show_page(conn):
         btn_c1, btn_c2 = st.columns(2)
         with btn_c1:
             if st.button("💾 儲存草稿", use_container_width=True):
-                # 驗證必填欄位
                 df_to_save = st.session_state.bonus_details_df.dropna(
                     subset=['業務員姓名', '帳款名稱', '應收金額', '實收金額']
                 )
@@ -118,7 +113,6 @@ def show_page(conn):
                         df_to_save['source'].fillna('manual', inplace=True)
                         q_bonus.upsert_bonus_details_draft(conn, year, month, df_to_save)
                     st.success("草稿已成功儲存！")
-
 
         with btn_c2:
             with st.expander("從外部系統抓取資料"):
@@ -137,6 +131,13 @@ def show_page(conn):
                         with st.spinner("正在遍歷所有業務員並抓取資料..."):
                             raw_details_df, not_found = scraper.fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback)
                             raw_details_df['source'] = 'scraped'
+                        
+                        # --- 【核心修改】在抓取後也進行日期格式轉換 ---
+                        date_cols = ['入境日', '帳款日', '收款日']
+                        for col in date_cols:
+                            if col in raw_details_df.columns:
+                                raw_details_df[col] = pd.to_datetime(raw_details_df[col], errors='coerce').dt.date
+                        
                         q_bonus.upsert_bonus_details_draft(conn, year, month, raw_details_df)
                         st.session_state.bonus_details_df = raw_details_df
                         st.success(f"資料抓取完成！共抓取 {len(raw_details_df)} 筆明細。")
@@ -144,7 +145,6 @@ def show_page(conn):
                             st.warning(f"在系統中找不到員工: {', '.join(not_found)}")
                         st.rerun()
 
-    # --- TAB 2: 獎金總覽計算 ---
     with tab2:
         st.subheader("步驟 2: 計算獎金總覽")
         st.info(f"此處會根據您在「明細維護」頁籤中為 {year} 年 {month} 月儲存的最新草稿進行計算。")
@@ -187,7 +187,6 @@ def show_page(conn):
         else:
             st.info("點擊上方按鈕以計算獎金總覽。")
 
-    # --- TAB 3: 歷史紀錄與匯出 ---
     with tab3:
         st.subheader("查詢最終版紀錄與匯出")
         st.info("您可以在此查詢已鎖定的最終版獎金明細，並匯出為 Excel 報表。")
