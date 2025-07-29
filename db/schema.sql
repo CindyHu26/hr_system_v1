@@ -155,7 +155,9 @@ CREATE TABLE IF NOT EXISTS monthly_bonus_details (
     receivable_amount TEXT,
     received_date TEXT,
     received_amount TEXT,
-    salesperson_name TEXT
+    salesperson_name TEXT,
+    status TEXT NOT NULL DEFAULT 'draft', -- 'draft' 或 'final'
+    source TEXT NOT NULL DEFAULT 'scraped'  -- 'scraped' 或 'manual'
 );
 
 -- 提升依年月查詢獎金明細的速度
