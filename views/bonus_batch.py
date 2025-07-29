@@ -6,7 +6,7 @@ from dateutil.relativedelta import relativedelta
 import io
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Font, PatternFill, Alignment
 
 
 from services import bonus_scraper as scraper
@@ -17,56 +17,92 @@ from db import queries_employee as q_emp
 # --- 常數定義 ---
 DEFAULT_COLS = ["序號", "雇主姓名", "入境日", "外勞姓名", "帳款名稱", "帳款日", "應收金額", "收款日", "實收金額", "業務員姓名", "source"]
 
-# --- 【V4 版】Excel 產生器 - 為單一員工產生報表 ---
-def generate_single_person_excel(df: pd.DataFrame, person_name: str) -> io.BytesIO:
+# --- 【V5 版】Excel 產生器 - 為單一員工產生報表 ---
+def generate_single_person_excel(df: pd.DataFrame, person_name: str, year: int, month: int) -> io.BytesIO:
     """
     為單一員工的獎金明細 DataFrame 轉換為 Excel 檔案。
-    - 移除 source 和 業務員姓名 欄位。
-    - 在底部增加合計列。
+    - 修正金額格式問題。
+    - 新增最終獎金總結列。
     """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # 移除不必要的欄位
-        df_to_export = df.drop(columns=['source', '業務員姓名'], errors='ignore')
+        df_to_export = df.drop(columns=['source', '業務員姓名'], errors='ignore').copy()
+        
+        # --- 【核心修改 1】將金額欄位轉為數字格式 ---
+        money_cols = ['應收金額', '實收金額']
+        for col in money_cols:
+            if col in df_to_export.columns:
+                df_to_export[col] = pd.to_numeric(df_to_export[col], errors='coerce').fillna(0)
+
         df_to_export.to_excel(writer, sheet_name=str(person_name), index=False)
 
-        # 設定樣式並新增合計列
         worksheet = writer.sheets[str(person_name)]
-        if worksheet.max_row <= 1: # 如果沒有資料則不處理
+        if worksheet.max_row <= 1:
              output.seek(0)
              return output
 
         header_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+        summary_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # 醒目底色
         bold_font = Font(bold=True)
+        
+        # 設定表頭樣式與金額格式
         for cell in worksheet[1]:
             cell.fill = header_fill
             cell.font = bold_font
+            # 同時設定數字格式
+            if cell.value in money_cols:
+                for data_cell in worksheet[cell.column_letter][1:]:
+                    data_cell.number_format = '#,##0'
 
-        # 新增合計邏輯
         total_row_num = worksheet.max_row + 1
-        receivable_col_letter = None
-        received_col_letter = None
+        receivable_col_letter, received_col_letter = None, None
 
         for cell in worksheet[1]:
-            if cell.value == "應收金額":
-                receivable_col_letter = cell.column_letter
-            elif cell.value == "實收金額":
-                received_col_letter = cell.column_letter
+            if cell.value == "應收金額": receivable_col_letter = cell.column_letter
+            elif cell.value == "實收金額": received_col_letter = cell.column_letter
 
         total_cell = worksheet.cell(row=total_row_num, column=1, value="合計")
         total_cell.font = bold_font
+        total_cell.number_format = '@' # 避免合計被當成數字
 
         if receivable_col_letter:
             receivable_total_cell = worksheet[f"{receivable_col_letter}{total_row_num}"]
             receivable_total_cell.value = f"=SUM({receivable_col_letter}2:{receivable_col_letter}{total_row_num-1})"
             receivable_total_cell.font = bold_font
+            receivable_total_cell.number_format = '#,##0'
 
         if received_col_letter:
             received_total_cell = worksheet[f"{received_col_letter}{total_row_num}"]
             received_total_cell.value = f"=SUM({received_col_letter}2:{received_col_letter}{total_row_num-1})"
             received_total_cell.font = bold_font
+            received_total_cell.number_format = '#,##0'
 
-        # 自動調整欄寬
+        # --- 【核心修改 2】新增最終獎金總結列 ---
+        summary_row_num = total_row_num + 1
+        roc_year = year - 1911
+        # 建立公式：ROUND(實收總額儲存格 / 2, 0)
+        bonus_formula = f'=ROUND({received_col_letter}{total_row_num}/2, 0)' if received_col_letter else 0
+        summary_text = f'民國{roc_year}年{month}月業績獎金為：'
+        
+        # 合併儲存格
+        worksheet.merge_cells(start_row=summary_row_num, start_column=1, end_row=summary_row_num, end_column=worksheet.max_column)
+        
+        summary_cell_text = worksheet.cell(row=summary_row_num, column=1)
+        summary_cell_formula = worksheet.cell(row=summary_row_num, column=2) # 將公式放在第二欄，避免覆蓋文字
+        
+        summary_cell_text.value = summary_text
+        summary_cell_text.font = bold_font
+        summary_cell_text.alignment = Alignment(horizontal='right')
+        
+        summary_cell_formula.value = bonus_formula
+        summary_cell_formula.font = Font(bold=True, color="FF0000", underline="single") # 紅色粗體底線
+        summary_cell_formula.number_format = '#,##0'
+
+        # 為整行設定底色
+        for i in range(1, worksheet.max_column + 1):
+            worksheet.cell(row=summary_row_num, column=i).fill = summary_fill
+
+
         for column_cells in worksheet.columns:
             try:
                 length = max(len(str(cell.value)) for cell in column_cells if cell.value)
@@ -238,24 +274,25 @@ def show_page(conn):
                 st.markdown("#### 匯出選項")
                 
                 all_people_in_df = final_df['業務員姓名'].unique().tolist()
+                # --- 【核心修改 3】移除 default 參數，預設為空 ---
                 selected_people = st.multiselect(
-                    "選擇要匯出的人員 (可複選，預設為全部)",
-                    options=all_people_in_df,
-                    default=all_people_in_df
+                    "選擇要匯出的人員 (可複選)",
+                    options=all_people_in_df
                 )
                 
-                if not selected_people:
-                    st.warning("請至少選擇一位要匯出的人員。")
-                else:
+                if selected_people:
                     st.markdown("---")
                     st.write("請點擊下方按鈕，下載每位所選人員的獨立 Excel 檔案：")
-                    # --- 為每位選中的人員產生一個下載按鈕 ---
-                    cols = st.columns(len(selected_people))
+                    
+                    # 讓下載按鈕排版更好看，最多一行4個
+                    num_columns = min(len(selected_people), 4)
+                    cols = st.columns(num_columns)
+                    
                     roc_year = hist_year - 1911
                     for i, person in enumerate(selected_people):
-                        with cols[i]:
+                        with cols[i % num_columns]:
                             person_df = final_df[final_df['業務員姓名'] == person]
-                            excel_data = generate_single_person_excel(person_df, person)
+                            excel_data = generate_single_person_excel(person_df, person, hist_year, hist_month)
                             
                             st.download_button(
                                 label=f"📥 下載 {person} 的報表",
