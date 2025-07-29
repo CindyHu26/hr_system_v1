@@ -37,8 +37,8 @@ def show_page(conn):
         st.subheader("步驟 1: 輸入資訊並抓取目標人數")
         with st.form("perf_bonus_form_step1"):
             c1, c2 = st.columns(2)
-            username = c1.text_input("外部系統帳號", type="password")
-            password = c2.text_input("外部系統密碼", type="password")
+            username = c1.text_input("聘軒系統帳號", type="password")
+            password = c2.text_input("聘軒系統密碼", type="password")
 
             c3, c4 = st.columns(2)
             today = datetime.now()

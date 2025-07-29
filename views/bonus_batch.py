@@ -17,71 +17,62 @@ from db import queries_employee as q_emp
 # --- 常數定義 ---
 DEFAULT_COLS = ["序號", "雇主姓名", "入境日", "外勞姓名", "帳款名稱", "帳款日", "應收金額", "收款日", "實收金額", "業務員姓名", "source"]
 
-# --- 【V3 版】Excel 產生器 ---
-def generate_bonus_excel(df: pd.DataFrame) -> io.BytesIO:
+# --- 【V4 版】Excel 產生器 - 為單一員工產生報表 ---
+def generate_single_person_excel(df: pd.DataFrame, person_name: str) -> io.BytesIO:
     """
-    將獎金明細 DataFrame 轉換為 Excel 檔案。
-    - 每位員工一個獨立的工作表。
-    - 移除 source 欄位。
+    為單一員工的獎金明細 DataFrame 轉換為 Excel 檔案。
+    - 移除 source 和 業務員姓名 欄位。
     - 在底部增加合計列。
     """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # 移除 source 欄位
-        df_to_export = df.drop(columns=['source'], errors='ignore')
-        salespeople = df_to_export['業務員姓名'].unique()
-
-        if not salespeople.size:
-             pd.DataFrame().to_excel(writer, sheet_name="無資料", index=False)
-        else:
-            for person in salespeople:
-                person_df = df_to_export[df_to_export['業務員姓名'] == person].copy()
-                person_df.drop(columns=['業務員姓名'], inplace=True, errors='ignore')
-                person_df.to_excel(writer, sheet_name=str(person), index=False)
+        # 移除不必要的欄位
+        df_to_export = df.drop(columns=['source', '業務員姓名'], errors='ignore')
+        df_to_export.to_excel(writer, sheet_name=str(person_name), index=False)
 
         # 設定樣式並新增合計列
-        for worksheet in writer.sheets.values():
-            if worksheet.max_row <= 1: continue # 跳過空工作表
+        worksheet = writer.sheets[str(person_name)]
+        if worksheet.max_row <= 1: # 如果沒有資料則不處理
+             output.seek(0)
+             return output
 
-            header_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
-            bold_font = Font(bold=True)
-            for cell in worksheet[1]:
-                cell.fill = header_fill
-                cell.font = bold_font
+        header_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+        bold_font = Font(bold=True)
+        for cell in worksheet[1]:
+            cell.fill = header_fill
+            cell.font = bold_font
 
-            # --- 新增合計邏輯 ---
-            total_row_num = worksheet.max_row + 1
-            receivable_col_letter = None
-            received_col_letter = None
-            
-            # 找到應收和實收金額的欄位
-            for cell in worksheet[1]:
-                if cell.value == "應收金額":
-                    receivable_col_letter = cell.column_letter
-                elif cell.value == "實收金額":
-                    received_col_letter = cell.column_letter
-            
-            # 寫入合計
-            total_cell = worksheet.cell(row=total_row_num, column=1, value="合計")
-            total_cell.font = bold_font
-            
-            if receivable_col_letter:
-                receivable_total_cell = worksheet[f"{receivable_col_letter}{total_row_num}"]
-                receivable_total_cell.value = f"=SUM({receivable_col_letter}2:{receivable_col_letter}{total_row_num-1})"
-                receivable_total_cell.font = bold_font
-            
-            if received_col_letter:
-                received_total_cell = worksheet[f"{received_col_letter}{total_row_num}"]
-                received_total_cell.value = f"=SUM({received_col_letter}2:{received_col_letter}{total_row_num-1})"
-                received_total_cell.font = bold_font
+        # 新增合計邏輯
+        total_row_num = worksheet.max_row + 1
+        receivable_col_letter = None
+        received_col_letter = None
 
-            # 自動調整欄寬
-            for column_cells in worksheet.columns:
-                try:
-                    length = max(len(str(cell.value)) for cell in column_cells if cell.value)
-                    worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
-                except (ValueError, TypeError):
-                    continue
+        for cell in worksheet[1]:
+            if cell.value == "應收金額":
+                receivable_col_letter = cell.column_letter
+            elif cell.value == "實收金額":
+                received_col_letter = cell.column_letter
+
+        total_cell = worksheet.cell(row=total_row_num, column=1, value="合計")
+        total_cell.font = bold_font
+
+        if receivable_col_letter:
+            receivable_total_cell = worksheet[f"{receivable_col_letter}{total_row_num}"]
+            receivable_total_cell.value = f"=SUM({receivable_col_letter}2:{receivable_col_letter}{total_row_num-1})"
+            receivable_total_cell.font = bold_font
+
+        if received_col_letter:
+            received_total_cell = worksheet[f"{received_col_letter}{total_row_num}"]
+            received_total_cell.value = f"=SUM({received_col_letter}2:{received_col_letter}{total_row_num-1})"
+            received_total_cell.font = bold_font
+
+        # 自動調整欄寬
+        for column_cells in worksheet.columns:
+            try:
+                length = max(len(str(cell.value)) for cell in column_cells if cell.value)
+                worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
+            except (ValueError, TypeError):
+                continue
 
     output.seek(0)
     return output
@@ -152,10 +143,10 @@ def show_page(conn):
                     st.success("草稿已成功儲存！")
 
         with btn_c2:
-            with st.expander("從公司系統抓取資料"):
+            with st.expander("從聘軒系統抓取資料"):
                 with st.form("scrape_form"):
-                    username = st.text_input("公司系統帳號", type="password")
-                    password = st.text_input("公司系統密碼", type="password")
+                    username = st.text_input("聘軒系統帳號", type="password")
+                    password = st.text_input("聘軒系統密碼", type="password")
                     submitted = st.form_submit_button("執行資料抓取 (會覆蓋現有草稿)", type="primary")
 
                     if submitted:
@@ -225,7 +216,7 @@ def show_page(conn):
 
     with tab3:
         st.subheader("查詢最終版紀錄與匯出")
-        st.info("您可以在此查詢已鎖定的最終版獎金明細，並可篩選特定人員後匯出為 Excel 報表。")
+        st.info("您可以在此查詢已鎖定的最終版獎金明細，並可篩選特定人員後，為每位人員產生獨立的 Excel 報表。")
 
         c1_hist, c2_hist = st.columns(2)
         hist_year = c1_hist.number_input("選擇年份", min_value=2020, max_value=today.year + 1, value=year, key="hist_year")
@@ -246,7 +237,6 @@ def show_page(conn):
                 st.markdown("---")
                 st.markdown("#### 匯出選項")
                 
-                # --- 【新功能】人員篩選器 ---
                 all_people_in_df = final_df['業務員姓名'].unique().tolist()
                 selected_people = st.multiselect(
                     "選擇要匯出的人員 (可複選，預設為全部)",
@@ -257,16 +247,22 @@ def show_page(conn):
                 if not selected_people:
                     st.warning("請至少選擇一位要匯出的人員。")
                 else:
-                    # 篩選出選擇的人員資料
-                    df_for_export = final_df[final_df['業務員姓名'].isin(selected_people)]
-                    
-                    excel_data = generate_bonus_excel(df_for_export)
-                    st.download_button(
-                        label="📥 下載所選人員的明細 (Excel)",
-                        data=excel_data,
-                        file_name=f"業務獎金最終版_民國{hist_year-1911}年{hist_month}月.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                    st.markdown("---")
+                    st.write("請點擊下方按鈕，下載每位所選人員的獨立 Excel 檔案：")
+                    # --- 為每位選中的人員產生一個下載按鈕 ---
+                    cols = st.columns(len(selected_people))
+                    roc_year = hist_year - 1911
+                    for i, person in enumerate(selected_people):
+                        with cols[i]:
+                            person_df = final_df[final_df['業務員姓名'] == person]
+                            excel_data = generate_single_person_excel(person_df, person)
+                            
+                            st.download_button(
+                                label=f"📥 下載 {person} 的報表",
+                                data=excel_data,
+                                file_name=f"業務獎金_{person}_{roc_year}{hist_month:02d}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"download_{person}"
+                            )
             else:
                 st.warning("在選定的月份查無任何已鎖定的最終版紀錄。")
