@@ -17,12 +17,8 @@ from db import queries_employee as q_emp
 # --- 常數定義 ---
 DEFAULT_COLS = ["序號", "雇主姓名", "入境日", "外勞姓名", "帳款名稱", "帳款日", "應收金額", "收款日", "實收金額", "業務員姓名", "source"]
 
-# --- 【V6 版】Excel 產生器 - 修正 MergedCell 錯誤 ---
+# --- Excel 產生器 (維持不變) ---
 def generate_single_person_excel(df: pd.DataFrame, person_name: str, year: int, month: int) -> io.BytesIO:
-    """
-    為單一員工的獎金明細 DataFrame 轉換為 Excel 檔案。
-    - 修正 MergedCell 錯誤。
-    """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_to_export = df.drop(columns=['source', '業務員姓名'], errors='ignore').copy()
@@ -76,30 +72,25 @@ def generate_single_person_excel(df: pd.DataFrame, person_name: str, year: int, 
             received_total_cell.font = bold_font
             received_total_cell.number_format = '#,##0'
 
-        # --- 【核心修改】修正合併儲存格的寫入方式 ---
         summary_row_num = total_row_num + 1
         roc_year = year - 1911
         bonus_formula = f'=ROUND({received_col_letter}{total_row_num}/2, 0)' if received_col_letter else 0
         summary_text = f'民國{roc_year}年{month}月業績獎金為：'
         
-        # 合併文字部分儲存格 (除了最後一格)
         if last_column_index > 1:
             worksheet.merge_cells(start_row=summary_row_num, start_column=1, end_row=summary_row_num, end_column=last_column_index - 1)
         
-        # 在合併後的儲存格(左上角)寫入文字
         summary_cell_text = worksheet.cell(row=summary_row_num, column=1)
         summary_cell_text.value = summary_text
         summary_cell_text.font = bold_font
         summary_cell_text.alignment = Alignment(horizontal='right', vertical='center')
 
-        # 在最後一格(未合併)寫入公式
         summary_cell_formula = worksheet.cell(row=summary_row_num, column=last_column_index)
         summary_cell_formula.value = bonus_formula
         summary_cell_formula.font = Font(bold=True, color="FF0000", underline="single")
         summary_cell_formula.number_format = '#,##0'
         summary_cell_formula.alignment = Alignment(horizontal='left', vertical='center')
 
-        # 為整行設定底色
         for i in range(1, last_column_index + 1):
             worksheet.cell(row=summary_row_num, column=i).fill = summary_fill
 
@@ -290,7 +281,11 @@ def show_page(conn):
                     for i, person in enumerate(selected_people):
                         with cols[i % num_columns]:
                             person_df = final_df[final_df['業務員姓名'] == person]
-                            excel_data = generate_single_person_excel(person_df, person, hist_year, hist_month)
+                            
+                            # --- 【核心修改】在傳遞給 Excel 產生器前，先過濾掉異常項目 ---
+                            person_df_normal_only = person_df[~person_df['實收金額'].astype(str).str.contains(r'\*', na=False)].copy()
+                            
+                            excel_data = generate_single_person_excel(person_df_normal_only, person, hist_year, hist_month)
                             
                             st.download_button(
                                 label=f"📥 下載 {person} 的報表",
