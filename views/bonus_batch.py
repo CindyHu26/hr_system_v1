@@ -72,7 +72,6 @@ def show_page(conn):
         if st.button(f"讀取 {year} 年 {month} 月的草稿"):
             with st.spinner("正在讀取草稿..."):
                 draft_df = q_bonus.get_bonus_details_by_month(conn, year, month, status='draft')
-                # --- 【核心修改】在讀取後立刻進行日期格式轉換 ---
                 date_cols = ['入境日', '帳款日', '收款日']
                 for col in date_cols:
                     if col in draft_df.columns:
@@ -88,7 +87,8 @@ def show_page(conn):
             num_rows="dynamic", use_container_width=True,
             column_config={
                 "業務員姓名": st.column_config.SelectboxColumn("業務員姓名", options=employee_list, required=True),
-                "帳款名稱": st.column_config.SelectboxColumn("帳款名稱", options=["服務費", "外仲"], required=True),
+                # --- 【核心修改】將 SelectboxColumn 改為 TextColumn ---
+                "帳款名稱": st.column_config.TextColumn("帳款名稱", required=True),
                 "入境日": st.column_config.DateColumn("入境日", format="YYYY-MM-DD"),
                 "帳款日": st.column_config.DateColumn("帳款日", format="YYYY-MM-DD"),
                 "收款日": st.column_config.DateColumn("收款日", format="YYYY-MM-DD"),
@@ -115,10 +115,10 @@ def show_page(conn):
                     st.success("草稿已成功儲存！")
 
         with btn_c2:
-            with st.expander("從外部系統抓取資料"):
+            with st.expander("從公司系統抓取資料"):
                 with st.form("scrape_form"):
-                    username = st.text_input("業績系統帳號", type="password")
-                    password = st.text_input("業績系統密碼", type="password")
+                    username = st.text_input("公司系統帳號", type="password")
+                    password = st.text_input("公司系統密碼", type="password")
                     submitted = st.form_submit_button("執行資料抓取 (會覆蓋現有草稿)", type="primary")
 
                     if submitted:
@@ -132,7 +132,6 @@ def show_page(conn):
                             raw_details_df, not_found = scraper.fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback)
                             raw_details_df['source'] = 'scraped'
                         
-                        # --- 【核心修改】在抓取後也進行日期格式轉換 ---
                         date_cols = ['入境日', '帳款日', '收款日']
                         for col in date_cols:
                             if col in raw_details_df.columns:
