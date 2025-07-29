@@ -264,7 +264,7 @@ def show_page(conn):
                     st.download_button(
                         label="📥 下載所選人員的明細 (Excel)",
                         data=excel_data,
-                        file_name=f"業務獎金最終版_{hist_year}-{hist_month}.xlsx",
+                        file_name=f"業務獎金最終版_民國{hist_year-1911}年{hist_month}月.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
