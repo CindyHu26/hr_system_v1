@@ -156,9 +156,16 @@ def show_page(conn):
                         
                         st.markdown("##### 手動調整 (選填)")
                         c6, c7, c8 = st.columns(3)
-                        labor_override_edit = c6.number_input("勞保費(手動)", min_value=0, step=1, value=record_data.get('labor_insurance_override'))
-                        health_override_edit = c7.number_input("健保費(手動)", min_value=0, step=1, value=record_data.get('health_insurance_override'))
-                        pension_override_edit = c8.number_input("勞退提撥(手動)", min_value=0, step=1, value=record_data.get('pension_override'))
+                        
+                        # 處理 override 欄位的 None 和 float 型別問題
+                        labor_val = record_data.get('labor_insurance_override')
+                        labor_override_edit = c6.number_input("勞保費(手動)", min_value=0, step=1, value=int(labor_val) if pd.notna(labor_val) else None)
+
+                        health_val = record_data.get('health_insurance_override')
+                        health_override_edit = c7.number_input("健保費(手動)", min_value=0, step=1, value=int(health_val) if pd.notna(health_val) else None)
+
+                        pension_val = record_data.get('pension_override')
+                        pension_override_edit = c8.number_input("勞退提撥(手動)", min_value=0, step=1, value=int(pension_val) if pd.notna(pension_val) else None)
 
                         c_update, c_delete = st.columns(2)
                         if c_update.form_submit_button("儲存變更", use_container_width=True):
