@@ -15,7 +15,7 @@ WAIT_TIMEOUT = 120
 
 def fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback=None):
     """
-    擷取所有員工的獎金資料，並返回一個 DataFrame 以及未找到的員工名單。
+    擷取收款資料，並返回一個 DataFrame 以及未找到的員工名單。
     """
     all_details = []
     not_found_employees = []
@@ -25,7 +25,7 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
     try:
         options = webdriver.ChromeOptions()
         # 偵錯時建議註解下面這行，以便觀察瀏覽器實際操作
-        # options.add_argument("--headless") 
+        options.add_argument("--headless") 
         driver = webdriver.Chrome(options=options)
         wait = WebDriverWait(driver, WAIT_TIMEOUT)
         
