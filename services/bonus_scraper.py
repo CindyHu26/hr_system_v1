@@ -52,19 +52,15 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
                 receipt_end_date_input.clear()
                 receipt_end_date_input.send_keys(end_date)
 
-                # ▼▼▼▼▼【程式碼新增處】▼▼▼▼▼
                 # 3. 選擇 "離管身份代號" 為 "所有"
                 Select(wait.until(EC.visibility_of_element_located((By.NAME, "CU00_LNO")))).select_by_visible_text('所有')
-                # ▲▲▲▲▲【程式碼新增處】▲▲▲▲▲
                 
                 # 4. 選擇 "業務人員"
                 salesperson_select_element = wait.until(EC.visibility_of_element_located((By.NAME, "CU00_SALERS")))
                 Select(salesperson_select_element).select_by_visible_text(name)
 
-                # ▼▼▼▼▼【程式碼新增處】▼▼▼▼▼
                 # 5. 選擇 "費用項目" 為 "外勞服務費"
                 Select(wait.until(EC.visibility_of_element_located((By.NAME, "LAB03SS")))).select_by_visible_text('外勞服務費')
-                # ▲▲▲▲▲【程式碼新增處】▲▲▲▲▲
 
                 # 6. 點擊 "列印作業" 按鈕
                 submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and @value='列印作業']")))
@@ -73,8 +69,6 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
             except TimeoutException:
                  raise TimeoutException("在頁面上找不到必要的查詢欄位（如 '業務人員' 或 '列印作業' 按鈕），外部網站結構可能已大幅變更。")
             except NoSuchElementException:
-                not_found_employees.append(name)
-                print(f"在下拉選單中找不到員工: {name}，已跳過。")
                 try:
                     driver.get(url) 
                     wait.until(EC.presence_of_element_located((By.TAG_NAME, "form")))

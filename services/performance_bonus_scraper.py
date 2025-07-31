@@ -36,7 +36,7 @@ def fetch_performance_count(username, password, start_date_str, end_date_str):
     }
     options.add_experimental_option("prefs", prefs)
     # 偵錯時建議註解下面這行，以便觀察瀏覽器實際操作
-    # options.add_argument('--headless')
+    options.add_argument('--headless')
 
     driver = None
     latest_file = None
