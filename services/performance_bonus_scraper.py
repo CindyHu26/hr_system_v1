@@ -12,10 +12,10 @@ import config
 
 def fetch_performance_count(username, password, start_date_str, end_date_str):
     """
-    【修正版 v3】
-    - 強化 Chrome 瀏覽器選項，降低下載被阻擋的機率。
-    - 延長檔案下載的等待時間至 120 秒。
-    - 在偵錯時，更容易透過取消註解來觀察實際瀏覽器行為。
+    【修正版 v4】
+    - 根據使用者提供的最新 HTML 結構，修正所有欄位的定位方式。
+    - 保留從 .crdownload 暫存檔讀取文字的邏輯。
+    - 移除舊的、不穩定的 full XPath 定位方式。
     """
     if not config.PERFORMANCE_BONUS_URL:
         raise ValueError("環境變數 PERFORMANCE_BONUS_URL 未設定。")
@@ -24,31 +24,25 @@ def fetch_performance_count(username, password, start_date_str, end_date_str):
     if not os.path.exists(download_path):
         os.makedirs(download_path)
 
-    for f in glob.glob(os.path.join(download_path, "*.*")):
+    for f in glob.glob(os.path.join(download_path, "*.crdownload")):
         os.remove(f)
 
     options = webdriver.ChromeOptions()
-    
-    # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
-    # 優化下載相關設定，提高成功率
     prefs = {
         "download.default_directory": download_path,
-        "download.prompt_for_download": False, # 禁止跳出另存新檔視窗
-        "download.directory_upgrade": True,
-        "safeBrowse.enabled": False, # 關閉安全瀏覽功能
-        "plugins.always_open_pdf_externally": True, # 避免在瀏覽器內開啟PDF
-        "safeBrowse.disable_download_protection": True # 停用下載保護
+        "download.prompt_for_download": False,
+        "safeBrowse.enabled": False,
+        "safeBrowse.disable_download_protection": True
     }
     options.add_experimental_option("prefs", prefs)
     # 偵錯時建議註解下面這行，以便觀察瀏覽器實際操作
     # options.add_argument('--headless')
-    # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
     driver = None
+    latest_file = None
     try:
         driver = webdriver.Chrome(options=options)
-        # 將等待時間延長
-        wait = WebDriverWait(driver, 180)
+        wait = WebDriverWait(driver, 120)
         
         base_url_no_protocol = config.PERFORMANCE_BONUS_URL.split('//')[1]
         auth_url = f"http://{username}:{password}@{base_url_no_protocol}"
@@ -56,40 +50,71 @@ def fetch_performance_count(username, password, start_date_str, end_date_str):
         
         wait.until(EC.presence_of_element_located((By.NAME, "myform")))
         
+        # --- 【核心修改】根據新的 HTML 結構，使用穩健的 ID 和 Name 定位並填寫表單 ---
+        
+        # 1. 填寫期間起始日與截止日
         driver.find_element(By.ID, "CU00_BDATE").clear()
         driver.find_element(By.ID, "CU00_BDATE").send_keys(start_date_str)
         driver.find_element(By.ID, "CU00_EDATE").clear()
         driver.find_element(By.ID, "CU00_EDATE").send_keys(end_date_str)
         
+        # 2. 選擇下拉選單選項
         Select(driver.find_element(By.NAME, "CU00_LA198")).select_by_visible_text('一般移工')
         Select(driver.find_element(By.NAME, "CU00_ORG1")).select_by_visible_text('入境任用')
         Select(driver.find_element(By.NAME, "CU00_LNO")).select_by_visible_text('所有')
         Select(driver.find_element(By.NAME, "CU00_SALERS")).select_by_visible_text('全部')
         
+        # 3. 填寫其他輸入框 (根據舊版邏輯)
+        # 注意: 如果這些欄位不存在或不需要，可以安全地移除
+        driver.find_element(By.NAME, "CU00_SDATE").clear()
+        driver.find_element(By.NAME, "CU00_SDATE").send_keys('1')
+        driver.find_element(By.NAME, "CU00_drt").clear()
+        driver.find_element(By.NAME, "CU00_drt").send_keys('5')
+        driver.find_element(By.NAME, "CU00_SEL33").clear()
+        driver.find_element(By.NAME, "CU00_SEL33").send_keys('9')
+
+        # 4. 點擊按鈕以觸發下載 (注意：這裡的按鈕是 "轉出Excel"，而不是 "列印作業")
+        # 根據您的需求，我假設這個頁面觸發的是下載而不是顯示在頁面上
+        # 如果是顯示在頁面，邏輯會需要再次調整
         driver.find_element(By.XPATH, "//input[@type='submit' and @value='轉出Excel']").click()
         
-        # 將等待時間延長為 120 秒
+        # --- 後續邏輯維持不變，繼續等待並讀取 .crdownload 檔案 ---
         wait_time = 0
-        max_wait_time = 120 
-        downloaded_file_path = None
+        max_wait_time = 60 # 等待時間可依需調整
+        file_found = False
         
         while wait_time < max_wait_time:
-            downloaded_files = [f for f in os.listdir(download_path) if f.endswith('.xls') or f.endswith('.xlsx')]
-            if downloaded_files:
-                # 確保檔案已完全寫入
-                time.sleep(2)
-                downloaded_file_path = os.path.join(download_path, downloaded_files[0])
+            target_files = glob.glob(os.path.join(download_path, "*.crdownload"))
+            if target_files:
+                latest_file = max(target_files, key=os.path.getmtime)
+                # 等待一下，確保檔案內容已被寫入
+                time.sleep(2) 
+                file_found = True
                 break
             time.sleep(1)
             wait_time += 1
 
-        if not downloaded_file_path:
-            raise TimeoutError(f"在 {max_wait_time} 秒內，於 '{download_path}' 資料夾中找不到下載完成的 Excel 檔案。")
+        if not file_found:
+            raise TimeoutError(f"在 {max_wait_time} 秒內，於 '{download_path}' 資料夾中找不到任何 .crdownload 檔案。")
 
-        df = pd.read_excel(downloaded_file_path, engine='xlrd')
+        # 讀取暫存檔內容
+        with open(latest_file, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+
+        # 使用正規表示式解析檔案內容
+        # 假設 .crdownload 內部的文字格式與您之前提到的類似
+        pattern = r"合計:\s*(\d+)人.*?遞補:\s*(\d+)人"
+        match = re.search(pattern, content)
+
+        if not match:
+            # 如果找不到，提供一個更有用的錯誤訊息
+            # print(f"暫存檔內容: {content[:500]}") # 偵錯用，可以印出檔案內容
+            raise ValueError("在下載的暫存檔案內容中找不到 '合計: X人' 和 '遞補: Y人' 的格式文字。")
         
-        final_count = len(df)
+        total_count = int(match.group(1))
+        replacement_count = int(match.group(2))
         
+        final_count = total_count - replacement_count
         return final_count
 
     finally:
