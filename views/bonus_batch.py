@@ -7,6 +7,10 @@ import io
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.styles import Font, PatternFill, Alignment
+# ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
+# 導入 TimeoutException 以便捕捉特定錯誤
+from selenium.common.exceptions import TimeoutException
+# ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
 
 from services import bonus_scraper as scraper
@@ -177,27 +181,37 @@ def show_page(conn):
                     submitted = st.form_submit_button("執行資料抓取 (會覆蓋現有草稿)", type="primary")
 
                     if submitted:
-                        progress_bar = st.progress(0, text="準備開始...")
-                        with st.spinner("正在獲取員工名單..."):
-                            employees_df = q_emp.get_all_employees(conn)
-                            employee_names = employees_df['name_ch'].unique().tolist()
-                        def progress_callback(message, percent):
-                            progress_bar.progress(percent, text=message)
-                        with st.spinner("正在遍歷所有業務員並抓取資料..."):
-                            raw_details_df, not_found = scraper.fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback)
-                            raw_details_df['source'] = 'scraped'
+                        # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
+                        try:
+                            progress_bar = st.progress(0, text="準備開始...")
+                            with st.spinner("正在獲取員工名單..."):
+                                employees_df = q_emp.get_all_employees(conn)
+                                employee_names = employees_df['name_ch'].unique().tolist()
+                            
+                            def progress_callback(message, percent):
+                                progress_bar.progress(percent, text=message)
+                            
+                            with st.spinner("正在遍歷所有業務員並抓取資料..."):
+                                raw_details_df, not_found = scraper.fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback)
+                                raw_details_df['source'] = 'scraped'
+                            
+                            date_cols = ['入境日', '帳款日', '收款日']
+                            for col in date_cols:
+                                if col in raw_details_df.columns:
+                                    raw_details_df[col] = pd.to_datetime(raw_details_df[col], errors='coerce').dt.date
+                            
+                            q_bonus.upsert_bonus_details_draft(conn, year, month, raw_details_df)
+                            st.session_state.bonus_details_df = raw_details_df
+                            st.success(f"資料抓取完成！共抓取 {len(raw_details_df)} 筆明細。")
+                            if not_found:
+                                st.warning(f"在系統中找不到員工: {', '.join(not_found)}")
+                            st.rerun()
                         
-                        date_cols = ['入境日', '帳款日', '收款日']
-                        for col in date_cols:
-                            if col in raw_details_df.columns:
-                                raw_details_df[col] = pd.to_datetime(raw_details_df[col], errors='coerce').dt.date
-                        
-                        q_bonus.upsert_bonus_details_draft(conn, year, month, raw_details_df)
-                        st.session_state.bonus_details_df = raw_details_df
-                        st.success(f"資料抓取完成！共抓取 {len(raw_details_df)} 筆明細。")
-                        if not_found:
-                            st.warning(f"在系統中找不到員工: {', '.join(not_found)}")
-                        st.rerun()
+                        except TimeoutException as e:
+                            st.error(f"抓取資料時發生逾時錯誤：{e}")
+                        except Exception as e:
+                            st.error(f"抓取資料時發生未知錯誤：{e}")
+                        # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
     with tab2:
         st.subheader("步驟 2: 計算獎金總覽")

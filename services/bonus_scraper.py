@@ -5,16 +5,18 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from bs4 import BeautifulSoup
 from utils.helpers import get_monthly_dates
 import config
 
-WAIT_TIMEOUT = 60
+# 等待時間可以視情況調整
+WAIT_TIMEOUT = 120
 
 def fetch_all_bonus_data(username, password, year, month, employee_names, progress_callback=None):
     """
-    【修正版】新增過濾邏輯，自動排除作為表頭的資料列。
+    【修正版 v5】
+    - 移除 UI 相關的 st.error 呼叫，改為向上拋出例外。
     """
     all_details = []
     not_found_employees = []
@@ -23,7 +25,7 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
     driver = None
     try:
         options = webdriver.ChromeOptions()
-        # options.add_argument("--headless")
+        # options.add_argument("--headless") 
         driver = webdriver.Chrome(options=options)
         wait = WebDriverWait(driver, WAIT_TIMEOUT)
         
@@ -33,34 +35,45 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
         url = f"http://{username}:{password}@{base_url}"
         driver.get(url)
 
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "form")))
+
         for i, name in enumerate(employee_names):
             if progress_callback:
                 progress_callback(f"({i+1}/{len(employee_names)}) 正在擷取 [{name}] 的資料...", (i + 1) / len(employee_names))
             
-            wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id=\"myform\"]/table/tbody/tr[12]/td/select")))
-
-            receipt_start_date_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id=\"CU00_BDATE1\"]")))
-            receipt_start_date_input.clear()
-            receipt_start_date_input.send_keys(start_date)
-            
-            receipt_end_date_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id=\"CU00_EDATE1\"]")))
-            receipt_end_date_input.clear()
-            receipt_end_date_input.send_keys(end_date)
-
-            Select(wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id=\"myform\"]/table/tbody/tr[10]/td/select")))).select_by_index(0)
-
             try:
-                Select(wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id=\"myform\"]/table/tbody/tr[12]/td/select")))).select_by_visible_text(name)
+                receipt_start_date_input = wait.until(EC.element_to_be_clickable((By.ID, "CU00_BDATE1")))
+                receipt_start_date_input.clear()
+                receipt_start_date_input.send_keys(start_date)
+                
+                receipt_end_date_input = wait.until(EC.element_to_be_clickable((By.ID, "CU00_EDATE1")))
+                receipt_end_date_input.clear()
+                receipt_end_date_input.send_keys(end_date)
+                
+                salesperson_select_element = wait.until(EC.visibility_of_element_located((By.NAME, "CU00_SALERS")))
+                Select(salesperson_select_element).select_by_visible_text(name)
+
+                submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and @value='列印作業']")))
+                submit_button.click()
+
+            except TimeoutException:
+                 # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
+                 # 改為拋出帶有清晰說明的例外
+                 raise TimeoutException("在頁面上找不到必要的查詢欄位（如 '業務人員' 或 '列印作業' 按鈕），外部網站結構可能已大幅變更。")
+                 # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
             except NoSuchElementException:
                 not_found_employees.append(name)
+                print(f"在下拉選單中找不到員工: {name}，已跳過。")
+                try:
+                    driver.get(url) 
+                    wait.until(EC.presence_of_element_located((By.TAG_NAME, "form")))
+                except Exception as e:
+                    print(f"重新載入頁面失敗: {e}")
+                    raise 
                 continue
 
-            Select(wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id=\"myform\"]/table/tbody/tr[17]/td/select")))).select_by_index(0)
-            Select(wait.until(EC.visibility_of_element_located((By.XPATH, "//*[@id=\"myform\"]/table/tbody/tr[20]/td/select")))).select_by_value("1")
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id=\"myform\"]/table/tbody/tr[27]/td/input[1]"))).click()
-            
             wait.until(EC.visibility_of_element_located((By.XPATH, "//td[contains(text(), '應收合計')]")))
-            time.sleep(1)
+            time.sleep(1) 
 
             soup = BeautifulSoup(driver.page_source, 'lxml')
             data_rows = soup.find_all('tr', class_=['bg1', 'bg2'])
@@ -68,7 +81,6 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
             for row in data_rows:
                 cells = row.find_all('td')
                 if len(cells) >= 9:
-                    # **【關鍵修改】** 過濾掉作為表頭的列
                     if cells[0].get_text(strip=True) == "序號":
                         continue
                     
@@ -77,6 +89,7 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
                     all_details.append(row_data)
             
             driver.back()
+            wait.until(EC.presence_of_element_located((By.NAME, "CU00_SALERS")))
 
     finally:
         if driver:
