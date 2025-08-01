@@ -3,16 +3,16 @@
 此模組包含產生複雜報表的商業邏輯，例如年度薪資總表、二代健保試算等。
 """
 import pandas as pd
-import config
 from db import queries_salary_records as q_records
 from db import queries_salary_base as q_base
+from db import queries_config as q_config
 
 def generate_annual_salary_summary(conn, year: int, item_ids: list):
     """產生年度薪資總表的核心邏輯。"""
     if not item_ids:
         return pd.DataFrame(columns=['員工編號', '員工姓名'] + [f'{m}月' for m in range(1, 13)])
 
-    # --- 【修正點】改為呼叫 q_records 中的函式 ---
+    # --- 呼叫 q_records 中的函式 ---
     df = q_records.get_annual_salary_summary_data(conn, year, item_ids)
     if df.empty:
         return pd.DataFrame(columns=['員工編號', '員工姓名'] + [f'{m}月' for m in range(1, 13)])
@@ -38,10 +38,12 @@ def generate_annual_salary_summary(conn, year: int, item_ids: list):
 
 def generate_nhi_employer_summary(conn, year: int):
     """計算公司應負擔的二代健保補充保費。"""
+    db_configs = q_config.get_all_configs(conn)
+    NHI_SUPPLEMENT_RATE = float(db_configs.get('NHI_SUPPLEMENT_RATE', '0.0211'))
     results = []
 
     for month in range(1, 13):
-        # --- 【修正點】改為呼叫 q_records 中的函式 ---
+        # --- 呼叫 q_records 中的函式 ---
         report_df, _ = q_records.get_salary_report_for_editing(conn, year, month)
 
         # A. 支付薪資總額
@@ -123,51 +125,23 @@ def calculate_nhi_personal_bonus_for_period(conn, year: int, start_month: int, e
     """
     (通用版) 試算每位員工在指定期間內，因高額獎金應繳納的健保補充保費。
     """
-    # 1. 獲取所有員工在指定期間的薪資明細
-    salary_details_query = """
-    SELECT
-        s.employee_id,
-        e.name_ch,
-        si.name as item_name,
-        sd.amount
-    FROM salary_detail sd
-    JOIN salary s ON sd.salary_id = s.id
-    JOIN salary_item si ON sd.salary_item_id = si.id
-    JOIN employee e ON s.employee_id = e.id
-    WHERE s.year = ? AND s.status = 'final' AND s.month BETWEEN ? AND ?
-    """
+    db_configs = q_config.get_all_configs(conn)
+    NHI_SUPPLEMENT_RATE = float(db_configs.get('NHI_SUPPLEMENT_RATE', '0.0211'))
+    NHI_BONUS_MULTIPLIER = int(float(db_configs.get('NHI_BONUS_MULTIPLIER', '4')))
+    NHI_BONUS_ITEMS = [item.strip() for item in db_configs.get('NHI_BONUS_ITEMS', '').split(',')]
+
+    salary_details_query = "SELECT s.employee_id, e.name_ch, si.name as item_name, sd.amount FROM salary_detail sd JOIN salary s ON sd.salary_id = s.id JOIN salary_item si ON sd.salary_item_id = si.id JOIN employee e ON s.employee_id = e.id WHERE s.year = ? AND s.status = 'final' AND s.month BETWEEN ? AND ?"
     df_details = pd.read_sql_query(salary_details_query, conn, params=(year, start_month, end_month))
+    if df_details.empty: return pd.DataFrame()
 
-    if df_details.empty:
-        return pd.DataFrame()
-
-    # 2. 篩選出屬於獎金性質的項目
-    bonus_items = config.NHI_BONUS_ITEMS
-    df_bonus = df_details[df_details['item_name'].isin(bonus_items)]
-    
-    # 3. 按員工計算期間內的獎金總額
+    df_bonus = df_details[df_details['item_name'].isin(NHI_BONUS_ITEMS)]
     period_bonus_summary = df_bonus.groupby(['employee_id', 'name_ch'])['amount'].sum().reset_index()
     period_bonus_summary.rename(columns={'amount': '期間獎金總額'}, inplace=True)
-
-    # 4. 獲取員工在期間結束時的投保薪資作為計算基準
     emp_ids = period_bonus_summary['employee_id'].tolist()
     insured_salaries_map = q_base.get_batch_employee_insurance_salary(conn, emp_ids, year, end_month)
-    
     period_bonus_summary['投保薪資'] = period_bonus_summary['employee_id'].map(insured_salaries_map).fillna(0)
-
-    # 5. 計算補充保費
-    period_bonus_summary['計費門檻'] = period_bonus_summary['投保薪資'] * config.NHI_BONUS_MULTIPLIER
-    
-    period_bonus_summary['應計費金額'] = period_bonus_summary.apply(
-        lambda row: max(0, row['期間獎金總額'] - row['計費門檻']),
-        axis=1
-    )
-    
-    period_bonus_summary['應繳補充保費'] = (period_bonus_summary['應計費金額'] * config.NHI_SUPPLEMENT_RATE).round().astype(int)
-
-    # 6. 整理最終輸出的 DataFrame
-    result_df = period_bonus_summary[[
-        'name_ch', '期間獎金總額', '投保薪資', '計費門檻', '應計費金額', '應繳補充保費'
-    ]].rename(columns={'name_ch': '員工姓名'})
-
+    period_bonus_summary['計費門檻'] = period_bonus_summary['投保薪資'] * NHI_BONUS_MULTIPLIER
+    period_bonus_summary['應計費金額'] = period_bonus_summary.apply(lambda row: max(0, row['期間獎金總額'] - row['計費門檻']), axis=1)
+    period_bonus_summary['應繳補充保費'] = (period_bonus_summary['應計費金額'] * NHI_SUPPLEMENT_RATE).round().astype(int)
+    result_df = period_bonus_summary[['name_ch', '期間獎金總額', '投保薪資', '計費門檻', '應計費金額', '應繳補充保費']].rename(columns={'name_ch': '員工姓名'})
     return result_df[result_df['應繳補充保費'] > 0].sort_values(by='應繳補充保費', ascending=False)

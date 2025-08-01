@@ -8,7 +8,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select, WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import config
 
 def fetch_performance_count(username, password, start_date_str, end_date_str):
     """
@@ -17,40 +16,33 @@ def fetch_performance_count(username, password, start_date_str, end_date_str):
     - 保留從 .crdownload 暫存檔讀取文字的邏輯。
     - 移除舊的、不穩定的 full XPath 定位方式。
     """
-    if not config.PERFORMANCE_BONUS_URL:
+    PERFORMANCE_BONUS_URL = os.getenv("PERFORMANCE_BONUS_URL")
+    if not PERFORMANCE_BONUS_URL:
         raise ValueError("環境變數 PERFORMANCE_BONUS_URL 未設定。")
 
     download_path = os.path.join(os.getcwd(), "temp_downloads_perf")
-    if not os.path.exists(download_path):
-        os.makedirs(download_path)
-
-    for f in glob.glob(os.path.join(download_path, "*.crdownload")):
-        os.remove(f)
+    if not os.path.exists(download_path): os.makedirs(download_path)
+    for f in glob.glob(os.path.join(download_path, "*.*")): os.remove(f)
 
     options = webdriver.ChromeOptions()
     prefs = {
         "download.default_directory": download_path,
-        "download.prompt_for_download": False,
-        "safeBrowse.enabled": False,
-        "safeBrowse.disable_download_protection": True
+        "download.prompt_for_download": False, "download.directory_upgrade": True,
+        "safeBrowse.enabled": True, "plugins.always_open_pdf_externally": True
     }
     options.add_experimental_option("prefs", prefs)
-    # 偵錯時建議註解下面這行，以便觀察瀏覽器實際操作
-    options.add_argument('--headless')
+    # options.add_argument('--headless')
 
     driver = None
-    latest_file = None
     try:
         driver = webdriver.Chrome(options=options)
-        wait = WebDriverWait(driver, 120)
+        wait = WebDriverWait(driver, 180)
         
-        base_url_no_protocol = config.PERFORMANCE_BONUS_URL.split('//')[1]
+        base_url_no_protocol = PERFORMANCE_BONUS_URL.split('//')[1]
         auth_url = f"http://{username}:{password}@{base_url_no_protocol}"
         driver.get(auth_url)
         
         wait.until(EC.presence_of_element_located((By.NAME, "myform")))
-        
-        # --- 【核心修改】根據新的 HTML 結構，使用穩健的 ID 和 Name 定位並填寫表單 ---
         
         # 1. 填寫期間起始日與截止日
         driver.find_element(By.ID, "CU00_BDATE").clear()

@@ -8,7 +8,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from bs4 import BeautifulSoup
 from utils.helpers import get_monthly_dates
-import config
+import os
 
 # 等待時間可以視情況調整
 WAIT_TIMEOUT = 120
@@ -29,9 +29,11 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
         driver = webdriver.Chrome(options=options)
         wait = WebDriverWait(driver, WAIT_TIMEOUT)
         
-        if not config.BONUS_SYSTEM_URL:
+        # 改為直接從環境變數讀取
+        BONUS_SYSTEM_URL = os.getenv("BONUS_SYSTEM_URL")
+        if not BONUS_SYSTEM_URL:
             raise ValueError("錯誤：請在 .env 檔案中設定 BONUS_SYSTEM_URL")
-        base_url = config.BONUS_SYSTEM_URL.replace("http://", "").replace("https://", "")
+        base_url = BONUS_SYSTEM_URL.replace("http://", "").replace("https://", "")
         url = f"http://{username}:{password}@{base_url}"
         driver.get(url)
 

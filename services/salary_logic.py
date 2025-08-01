@@ -1,4 +1,5 @@
 # services/salary_logic.py
+import os
 import pandas as pd
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
@@ -43,7 +44,7 @@ def calculate_salary_df(conn, year, month):
     
     HOURLY_RATE_DIVISOR = float(db_configs.get('HOURLY_RATE_DIVISOR', '240.0'))
     NHI_SUPPLEMENT_RATE = float(db_configs.get('NHI_SUPPLEMENT_RATE', '0.0211'))
-    NHI_BONUS_MULTIPLIER = int(db_configs.get('NHI_BONUS_MULTIPLIER', '4'))
+    NHI_BONUS_MULTIPLIER = int(float(db_configs.get('NHI_BONUS_MULTIPLIER', '4')))
     NHI_BONUS_ITEMS = [item.strip() for item in db_configs.get('NHI_BONUS_ITEMS', '').split(',')]
     FOREIGNER_MULTIPLIER = float(db_configs.get('FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER', '1.5'))
     FOREIGNER_LOW_RATE = float(db_configs.get('FOREIGNER_LOW_INCOME_TAX_RATE', '0.06'))
