@@ -4,7 +4,39 @@
 與「請假(leave_record)」相關的資料庫操作。
 """
 import pandas as pd
+from datetime import time
 from utils.helpers import get_monthly_dates
+
+def update_attendance_record(conn, record_id: int, checkin: time, checkout: time, minutes: dict):
+    """
+    更新單筆出勤紀錄的簽到退時間與所有分鐘數。
+    """
+    sql = """
+    UPDATE attendance SET
+        checkin_time = ?,
+        checkout_time = ?,
+        late_minutes = ?,
+        early_leave_minutes = ?,
+        overtime1_minutes = ?,
+        overtime2_minutes = ?,
+        overtime3_minutes = ?,
+        note = '手動修改'
+    WHERE id = ?
+    """
+    params = (
+        checkin.strftime('%H:%M:%S'),
+        checkout.strftime('%H:%M:%S'),
+        minutes['late_minutes'],
+        minutes['early_leave_minutes'],
+        minutes['overtime1_minutes'],
+        minutes['overtime2_minutes'],
+        minutes['overtime3_minutes'],
+        record_id
+    )
+    cursor = conn.cursor()
+    cursor.execute(sql, params)
+    conn.commit()
+    return cursor.rowcount
 
 def get_attendance_by_month(conn, year, month):
     """根據年月查詢出勤紀錄，並一併顯示員工姓名與編號。"""

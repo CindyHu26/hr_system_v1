@@ -9,6 +9,7 @@ from views import (
     special_attendance,
     leave_analysis,
     leave_history,
+    special_days_management,
     salary_item_management,
     insurance_grade_management,
     salary_base_history,
@@ -47,6 +48,7 @@ PAGES_ATTENDANCE = {
     "🏖️ 年度特休計算": annual_leave,
 }
 PAGES_SALARY = {
+    "🌀 特殊日期管理": special_days_management,
     "1️⃣ 薪資基準與保費管理": salary_base_history,
     "2️⃣ 績效獎金計算": performance_bonus,
     "3️⃣ 業務獎金批次匯入": bonus_batch,

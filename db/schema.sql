@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS employee (
     entry_date DATE, hr_code TEXT UNIQUE, gender TEXT, birth_date DATE,
     nationality TEXT DEFAULT 'TW', arrival_date DATE, phone TEXT, address TEXT,
     dept TEXT, title TEXT, resign_date DATE, bank_account TEXT, note TEXT,
-    -- [新增] 健保特殊狀態欄位
     nhi_status TEXT DEFAULT '一般', -- 一般, 低收入戶, 自理
     nhi_status_expiry DATE
 );
@@ -126,21 +125,6 @@ CREATE TABLE IF NOT EXISTS monthly_bonus (
     UNIQUE(employee_id, year, month)
 );
 
--- --- 索引優化 (Index Optimizations) ---
--- 提升依員工ID查詢各項紀錄的速度
-CREATE INDEX IF NOT EXISTS idx_employee_id_on_attendance ON attendance (employee_id);
-CREATE INDEX IF NOT EXISTS idx_employee_id_on_special_attendance ON special_attendance (employee_id);
-CREATE INDEX IF NOT EXISTS idx_employee_id_on_leave_record ON leave_record (employee_id);
-CREATE INDEX IF NOT EXISTS idx_employee_id_on_salary_base_history ON salary_base_history (employee_id);
-CREATE INDEX IF NOT EXISTS idx_employee_id_on_salary ON salary (employee_id);
-CREATE INDEX IF NOT EXISTS idx_employee_id_on_employee_salary_item ON employee_salary_item (employee_id);
-CREATE INDEX IF NOT EXISTS idx_employee_id_on_monthly_bonus ON monthly_bonus (employee_id);
-CREATE INDEX IF NOT EXISTS idx_employee_id_on_employee_company_history ON employee_company_history (employee_id);
-
--- 提升依日期篩選紀錄的速度
-CREATE INDEX IF NOT EXISTS idx_date_on_attendance ON attendance (date);
-CREATE INDEX IF NOT EXISTS idx_date_on_leave_record ON leave_record (start_date);
-
 -- 每月業務獎金抓取明細歷史紀錄表
 CREATE TABLE IF NOT EXISTS monthly_bonus_details (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,9 +144,6 @@ CREATE TABLE IF NOT EXISTS monthly_bonus_details (
     source TEXT NOT NULL DEFAULT 'scraped'  -- 'scraped' 或 'manual'
 );
 
--- 提升依年月查詢獎金明細的速度
-CREATE INDEX IF NOT EXISTS idx_year_month_on_monthly_bonus_details ON monthly_bonus_details (year, month);
-
 -- 每月績效獎金中繼站
 CREATE TABLE IF NOT EXISTS monthly_performance_bonus (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,5 +155,24 @@ CREATE TABLE IF NOT EXISTS monthly_performance_bonus (
     UNIQUE(employee_id, year, month)
 );
 
--- 提升依員工ID查詢績效獎金的速度
+-- 特殊不計薪日設定表
+CREATE TABLE IF NOT EXISTS special_unpaid_days (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date DATE NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- --- 索引優化 (Index Optimizations) ---
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_attendance ON attendance (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_special_attendance ON special_attendance (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_leave_record ON leave_record (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_salary_base_history ON salary_base_history (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_salary ON salary (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_employee_salary_item ON employee_salary_item (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_monthly_bonus ON monthly_bonus (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_employee_company_history ON employee_company_history (employee_id);
+CREATE INDEX IF NOT EXISTS idx_date_on_attendance ON attendance (date);
+CREATE INDEX IF NOT EXISTS idx_date_on_leave_record ON leave_record (start_date);
+CREATE INDEX IF NOT EXISTS idx_year_month_on_monthly_bonus_details ON monthly_bonus_details (year, month);
 CREATE INDEX IF NOT EXISTS idx_employee_id_on_monthly_performance_bonus ON monthly_performance_bonus (employee_id);
