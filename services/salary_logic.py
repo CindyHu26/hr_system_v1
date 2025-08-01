@@ -16,33 +16,24 @@ from services import overtime_logic
 from views.annual_leave import calculate_leave_entitlement
 
 def calculate_single_employee_insurance(conn, insurance_salary, dependents_under_18, dependents_over_18, nhi_status, nhi_status_expiry, year, month):
-    """
-    計算單一員工應負擔的勞健保費，分別返回勞保與健保費用。
-    """
-    if not insurance_salary or insurance_salary <= 0:
-        return 0, 0
-
+    if not insurance_salary or insurance_salary <= 0: return 0, 0
     labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary, year, month)
     total_health_fee = 0
-
     d_under_18 = float(dependents_under_18 or 0)
     d_over_18 = float(dependents_over_18 or 0)
-
     expiry_date = pd.to_datetime(nhi_status_expiry, errors='coerce').date() if pd.notna(nhi_status_expiry) else None
     is_expired = expiry_date < date(year, month, 1) if expiry_date else False
 
     if nhi_status == '自理':
         total_health_fee = 0
     elif nhi_status == '低收入戶' and not is_expired:
-        person_fee = health_fee_base * 0.5
-        dependents_fee = d_over_18 * health_fee_base * 0.5
-        total_health_fee = person_fee + dependents_fee
+        total_health_fee = health_fee_base * (0.5 + (d_over_18 * 0.5))
     else:
         total_dependents_count = d_under_18 + d_over_18
         health_ins_count = min(3, total_dependents_count)
         total_health_fee = health_fee_base * (1 + health_ins_count)
-
     return int(round(labor_fee)), int(round(total_health_fee))
+
 
 def calculate_salary_df(conn, year, month):
     """
@@ -108,12 +99,13 @@ def calculate_salary_df(conn, year, month):
             auto_labor_fee, auto_health_fee = calculate_single_employee_insurance(conn, insurance_salary, base_info['dependents_under_18'], base_info['dependents_over_18'], emp['nhi_status'], emp['nhi_status_expiry'], year, month)
             details['勞保費'] = -int(base_info['labor_insurance_override'] if pd.notna(base_info['labor_insurance_override']) else auto_labor_fee)
             
-            health_override = base_info.get('health_insurance_override')
+            # 將 .get() 修正為正確的 ['key'] 取值方式
+            health_override = base_info['health_insurance_override']
+            
             if pd.notna(health_override):
-                # 如果有手動值，將其視為個人基數重新計算總額
                 manual_health_base = int(health_override)
-                d_under_18 = float(base_info.get('dependents_under_18', 0) or 0)
-                d_over_18 = float(base_info.get('dependents_over_18', 0) or 0)
+                d_under_18 = float(base_info['dependents_under_18'] or 0)
+                d_over_18 = float(base_info['dependents_over_18'] or 0)
                 total_dependents_count = d_under_18 + d_over_18
                 health_ins_count = min(3, total_dependents_count)
                 final_health_fee = int(round(manual_health_base * (1 + health_ins_count)))
@@ -163,7 +155,6 @@ def calculate_salary_df(conn, year, month):
 
 def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
     report = {"success": 0, "skipped_emp": [], "skipped_item": [], "no_salary_record": []}
-    
     try:
         df = pd.read_excel(uploaded_file)
         if '員工姓名' not in df.columns: raise ValueError("Excel 檔案中缺少 '員工姓名' 欄位。")

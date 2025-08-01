@@ -51,8 +51,11 @@ def show_page(conn):
                         current_checkout = datetime.strptime(record_data['checkout_time'], '%H:%M:%S').time() if record_data['checkout_time'] else time(17, 30)
 
                         c1_edit, c2_edit = st.columns(2)
-                        new_checkin = c1_edit.time_input("新的簽到時間", value=current_checkin)
-                        new_checkout = c2_edit.time_input("新的簽退時間", value=current_checkout)
+                        # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
+                        # 新增 step=60 參數，讓時間可以逐分鐘選擇
+                        new_checkin = c1_edit.time_input("新的簽到時間", value=current_checkin, step=60)
+                        new_checkout = c2_edit.time_input("新的簽退時間", value=current_checkout, step=60)
+                        # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
                         if st.form_submit_button("確認修改並重新計算時數", type="primary"):
                             with st.spinner("正在重新計算並儲存..."):
