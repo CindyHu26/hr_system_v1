@@ -1,8 +1,8 @@
 # services/salary_logic.py
-import os
 import pandas as pd
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
+import os
 
 from db import queries_employee as q_emp
 from db import queries_attendance as q_att
@@ -19,24 +19,27 @@ from views.annual_leave import calculate_leave_entitlement
 def calculate_single_employee_insurance(conn, insurance_salary, dependents_under_18, dependents_over_18, nhi_status, nhi_status_expiry, year, month):
     if not insurance_salary or insurance_salary <= 0: return 0, 0
     labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary, year, month)
+    total_health_fee = 0
     d_under_18 = float(dependents_under_18 or 0)
     d_over_18 = float(dependents_over_18 or 0)
     expiry_date = pd.to_datetime(nhi_status_expiry, errors='coerce').date() if pd.notna(nhi_status_expiry) else None
     is_expired = expiry_date < date(year, month, 1) if expiry_date else False
 
-    if nhi_status == '自理': return int(round(labor_fee)), 0
-    if nhi_status == '低收入戶' and not is_expired:
+    if nhi_status == '自理':
+        total_health_fee = 0
+    elif nhi_status == '低收入戶' and not is_expired:
         total_health_fee = health_fee_base * (0.5 + (d_over_18 * 0.5))
     else:
-        health_ins_count = min(3, d_under_18 + d_over_18)
+        total_dependents_count = d_under_18 + d_over_18
+        health_ins_count = min(3, total_dependents_count)
         total_health_fee = health_fee_base * (1 + health_ins_count)
     return int(round(labor_fee)), int(round(total_health_fee))
 
+
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V24: 全面改為從資料庫讀取動態系統參數。
+    薪資試算引擎 V26: 新增兼職人員二代健保補充保費計算邏輯
     """
-    # 從資料庫動態獲取所有計算參數
     db_configs = q_config.get_all_configs(conn)
     MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
     if MINIMUM_WAGE_OF_YEAR == 0:
@@ -50,7 +53,7 @@ def calculate_salary_df(conn, year, month):
     FOREIGNER_LOW_RATE = float(db_configs.get('FOREIGNER_LOW_INCOME_TAX_RATE', '0.06'))
     FOREIGNER_HIGH_RATE = float(db_configs.get('FOREIGNER_HIGH_INCOME_TAX_RATE', '0.18'))
     TAX_THRESHOLD = MINIMUM_WAGE_OF_YEAR * FOREIGNER_MULTIPLIER
-
+    
     employees = q_emp.get_active_employees_for_month(conn, year, month)
     if not employees: return pd.DataFrame(), {}
     
@@ -92,7 +95,7 @@ def calculate_salary_df(conn, year, month):
                     unused_days = total_entitled_days - (used_hours / 8)
                     if unused_days > 0:
                         details['特休未休'] = int(round(unused_days * (base_salary / 30)))
-                        
+
         if emp_id in monthly_attendance.index:
             emp_att = monthly_attendance.loc[emp_id]
             if emp_att.get('late_minutes', 0) > 0: details['遲到'] = -int(round((emp_att['late_minutes'] / 60) * hourly_rate))
@@ -109,7 +112,9 @@ def calculate_salary_df(conn, year, month):
         for item in q_allow.get_employee_recurring_items(conn, emp_id):
             details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
 
-        if insurance_salary > 0:
+        is_insured_in_company = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
+
+        if is_insured_in_company:
             auto_labor_fee, auto_health_fee = calculate_single_employee_insurance(conn, insurance_salary, base_info['dependents_under_18'], base_info['dependents_over_18'], emp['nhi_status'], emp['nhi_status_expiry'], year, month)
             details['勞保費'] = -int(base_info['labor_insurance_override'] if pd.notna(base_info['labor_insurance_override']) else auto_labor_fee)
             health_override = base_info['health_insurance_override']
@@ -124,7 +129,7 @@ def calculate_salary_df(conn, year, month):
             else:
                 details['健保費'] = -auto_health_fee
             details['勞退提撥'] = int(base_info['pension_override'] if pd.notna(base_info['pension_override']) else round(insurance_salary * 0.06))
-
+        
         if emp['nationality'] and emp['nationality'] != 'TW' and pd.notna(emp['entry_date']):
             entry_date = pd.to_datetime(emp['entry_date']).date()
             should_withhold = (year == entry_date.year and (entry_date.month >= 7 or month < entry_date.month + 6)) or \
@@ -139,8 +144,13 @@ def calculate_salary_df(conn, year, month):
         if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
         perf_bonus_result = q_perf.get_performance_bonus(conn, emp_id, year, month)
         if perf_bonus_result: details['績效獎金'] = int(round(perf_bonus_result))
+        
+        # 二代健保補充保費計算 (邏輯分流)
+        earning_cols_for_bonus = [col for col, type in item_types.items() if type == 'earning']
+        current_month_total_earnings = sum(details.get(item, 0) for item in earning_cols_for_bonus)
 
-        if q_ins.is_employee_insured_in_month(conn, emp_id, year, month):
+        if is_insured_in_company:
+            # 情況一：公司有加保 (計算高額獎金補充保費)
             current_month_bonus = sum(details.get(item, 0) for item in NHI_BONUS_ITEMS if item in details)
             if current_month_bonus > 0:
                 cumulative_bonus, already_deducted = q_records.get_cumulative_bonus_for_year(conn, emp_id, year, NHI_BONUS_ITEMS)
@@ -151,12 +161,16 @@ def calculate_salary_df(conn, year, month):
                     total_premium_due = round(taxable_bonus * NHI_SUPPLEMENT_RATE)
                     this_month_premium = total_premium_due - already_deducted
                     if this_month_premium > 0:
-                        details['二代健保補充費'] = -int(this_month_premium)
-        
+                        details['二代健保(高額獎金)'] = -int(this_month_premium)
+        else:
+            if current_month_total_earnings > 0:
+                part_time_premium = round(current_month_total_earnings * NHI_SUPPLEMENT_RATE)
+                if part_time_premium > 0:
+                    details['二代健保(兼職)'] = -int(part_time_premium)
+
         all_salary_data.append(details)
     return pd.DataFrame(all_salary_data).fillna(0), item_types
 
-# ... (process_batch_salary_update_excel 函式維持不變) ...
 def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
     report = {"success": 0, "skipped_emp": [], "skipped_item": [], "no_salary_record": []}
     try:
