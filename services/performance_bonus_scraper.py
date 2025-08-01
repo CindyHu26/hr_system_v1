@@ -61,7 +61,7 @@ def fetch_performance_count(username, password, start_date_str, end_date_str):
         # 2. 選擇下拉選單選項
         Select(driver.find_element(By.NAME, "CU00_LA198")).select_by_visible_text('一般移工')
         Select(driver.find_element(By.NAME, "CU00_ORG1")).select_by_visible_text('入境任用')
-        Select(driver.find_element(By.NAME, "CU00_LNO")).select_by_visible_text('所有')
+        Select(driver.find_element(By.NAME, "CU00_LNO")).select_by_visible_text('聘僱中')
         Select(driver.find_element(By.NAME, "CU00_SALERS")).select_by_visible_text('全部')
         
         # 3. 填寫其他輸入框 (根據舊版邏輯)
