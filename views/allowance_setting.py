@@ -13,10 +13,10 @@ def show_page(conn):
     st.header("➕ 員工常態薪資項設定")
     st.info("您可以在此總覽與快速修改現有設定，或透過批次功能進行大量新增。")
 
-    # [核心修改] 建立新的三頁籤結構
-    tab1, tab2, tab3 = st.tabs(["📖 總覽與快速修改", "✨ 批次新增設定", "🚀 批次匯入 (Excel)"])
+    # 頁籤結構維持不變
+    tab1, tab2, tab3 = st.tabs(["📖 總覽與單筆維護", "✨ 批次新增設定", "🚀 批次匯入 (Excel)"])
 
-    # --- TAB 1: 總覽與快速修改 (新功能) ---
+    # --- TAB 1: 總覽與單筆維護 (整合版) ---
     with tab1:
         st.subheader("常態薪資項總覽 (可直接修改)")
         try:
@@ -24,34 +24,32 @@ def show_page(conn):
             long_df = q_allow.get_all_employee_salary_items(conn)
 
             if not long_df.empty:
-                # 2. 建立一個 (員工ID, 項目名稱) -> 紀錄ID 的查詢字典，供後續更新使用
+                # 2. 建立查詢字典，供後續更新使用
                 id_mapper = {
                     (row['employee_id'], row['項目名稱']): row['id']
                     for _, row in long_df.iterrows()
                 }
 
-                # 3. 使用 pivot_table 將長表轉為寬表
+                # 3. 轉換為寬表 (Pivot Table)
                 wide_df = long_df.pivot_table(
                     index=['employee_id', '員工姓名'],
                     columns='項目名稱',
                     values='金額'
                 ).reset_index()
                 
-                # 將 employee_id 設為索引，方便後續操作，但不在表格中顯示
                 wide_df.set_index('employee_id', inplace=True)
 
                 # 儲存原始資料以供比對
                 if 'original_allowance_df' not in st.session_state:
                     st.session_state.original_allowance_df = wide_df.copy()
 
-                # 4. 使用 data_editor 顯示可編輯的表格
+                # 4. 使用 data_editor 顯示表格，用於快速修改金額
                 st.caption("您可以直接在下表中修改金額。修改後請點擊下方的「儲存變更」按鈕。")
-                edited_df = st.data_editor(wide_df, use_container_width=True)
+                edited_df = st.data_editor(wide_df, use_container_width=True, key="allowance_editor")
 
-                # 5. 儲存變更的邏輯
-                if st.button("💾 儲存變更", type="primary"):
+                # 5. 儲存來自 data_editor 的變更
+                if st.button("💾 儲存表格變更", type="primary"):
                     original_df = st.session_state.original_allowance_df
-                    # 找出被修改過的儲存格
                     changes = edited_df.compare(original_df)
                     
                     if changes.empty:
@@ -59,19 +57,17 @@ def show_page(conn):
                     else:
                         updates_count = 0
                         with st.spinner("正在儲存變更..."):
-                            # 遍歷所有被修改的儲存格
-                            for (emp_id, emp_name), row in changes.iterrows():
-                                for item_name, values in row.items():
-                                    # `compare` 會顯示 self (修改後) 和 other (修改前)
-                                    old_val, new_val = values['other'], values['self']
-                                    if pd.notna(new_val): # 只處理有新值的
-                                        record_id = id_mapper.get((emp_id, item_name))
-                                        if record_id:
-                                            q_common.update_record(conn, 'employee_salary_item', record_id, {'amount': new_val})
-                                            updates_count += 1
+                            for emp_id, changed_row in changes.iterrows():
+                                changed_columns = changed_row.dropna().index.get_level_values(0).unique()
+                                for item_name in changed_columns:
+                                    new_value = changed_row.get((item_name, 'self'))
+                                    record_id = id_mapper.get((emp_id, item_name))
+                                    if record_id is not None:
+                                        amount_to_save = 0 if pd.isna(new_value) else new_value
+                                        q_common.update_record(conn, 'employee_salary_item', record_id, {'amount': amount_to_save})
+                                        updates_count += 1
                         
                         st.success(f"成功更新了 {updates_count} 筆設定！")
-                        # 清除 session state 以便下次重新載入
                         del st.session_state.original_allowance_df
                         st.rerun()
 
@@ -80,9 +76,75 @@ def show_page(conn):
 
         except Exception as e:
             st.error(f"載入總覽頁面時發生錯誤: {e}")
+            long_df = pd.DataFrame() # 確保 long_df 存在
 
+        st.markdown("---")
+        st.subheader("單筆資料操作")
 
-    # --- TAB 2: 批次新增設定 (保留舊功能) ---
+        # --- 新增區塊 ---
+        with st.expander("✨ 新增一筆設定"):
+            with st.form("add_allowance_form_single", clear_on_submit=True):
+                employees = q_common.get_all(conn, 'employee', order_by='hr_code')
+                items = q_items.get_all_salary_items(conn, active_only=True)
+
+                emp_options = {f"{row['name_ch']} ({row['hr_code']})": row['id'] for _, row in employees.iterrows()}
+                item_options = {row['name']: row['id'] for _, row in items.iterrows()}
+
+                c1, c2, c3 = st.columns(3)
+                emp_key = c1.selectbox("選擇員工*", options=emp_options.keys(), index=None)
+                item_key = c2.selectbox("選擇薪資項目*", options=item_options.keys(), index=None)
+                amount = c3.number_input("設定金額*", min_value=0, step=100)
+                
+                c4, c5 = st.columns(2)
+                start_date = c4.date_input("生效日*", value=datetime.now().date())
+                end_date = c5.date_input("結束日 (留空表示持續有效)", value=None)
+                
+                note = st.text_area("備註 (可選填)")
+
+                if st.form_submit_button("確認新增", type="primary"):
+                    if not all([emp_key, item_key]):
+                        st.warning("請務必選擇員工和薪資項目！")
+                    else:
+                        new_data = {
+                            'employee_id': emp_options[emp_key],
+                            'salary_item_id': item_options[item_key],
+                            'amount': amount,
+                            'start_date': start_date.strftime('%Y-%m-%d'),
+                            'end_date': end_date.strftime('%Y-%m-%d') if end_date else None,
+                            'note': note
+                        }
+                        q_common.add_record(conn, 'employee_salary_item', new_data)
+                        st.success("成功新增一筆設定！")
+                        if 'original_allowance_df' in st.session_state:
+                            del st.session_state.original_allowance_df
+                        st.rerun()
+
+        # --- 刪除區塊 ---
+        with st.expander("🗑️ 刪除現有設定"):
+            if not long_df.empty:
+                record_options = {
+                    f"ID:{row['id']} - {row['員工姓名']} / {row['項目名稱']}": row['id']
+                    for _, row in long_df.iterrows()
+                }
+                selected_key = st.selectbox(
+                    "選擇一筆設定進行刪除", 
+                    options=record_options.keys(), 
+                    index=None
+                )
+                if st.button("🔴 確認刪除所選紀錄", type="primary"):
+                    if selected_key:
+                        record_id = record_options[selected_key]
+                        q_common.delete_record(conn, 'employee_salary_item', record_id)
+                        st.warning(f"ID: {record_id} 的紀錄已刪除！")
+                        if 'original_allowance_df' in st.session_state:
+                            del st.session_state.original_allowance_df
+                        st.rerun()
+                    else:
+                        st.warning("請先選擇一筆要刪除的紀錄。")
+            else:
+                st.info("目前沒有可供刪除的紀錄。")
+
+    # --- TAB 2: 批次新增設定 (維持不變) ---
     with tab2:
         st.subheader("批次新增設定")
         st.markdown("為一群員工 **新增** 一個新的常態薪資項目。如果員工已存在該項目，原設定將被覆蓋。")
@@ -117,13 +179,15 @@ def show_page(conn):
                                     start_date_str, end_date_str, note
                                 )
                             st.success(f"成功為 {count} 位員工新增/更新了「{selected_item_name}」的設定！")
+                            if 'original_allowance_df' in st.session_state:
+                                del st.session_state.original_allowance_df
                             st.rerun()
             else:
                 st.warning("沒有可用的薪資項目。請先至「薪資項目管理」頁面新增項目。")
         except Exception as e:
             st.error(f"載入新增表單時發生錯誤: {e}")
 
-    # --- TAB 3: 批次匯入 (Excel) (保留舊功能) ---
+    # --- TAB 3: 批次匯入 (Excel) (維持不變) ---
     with tab3:
         create_batch_import_section(
             info_text="說明：系統會以「員工姓名 + 項目名稱 + 生效日」為唯一鍵，若紀錄已存在則會更新，否則新增。",

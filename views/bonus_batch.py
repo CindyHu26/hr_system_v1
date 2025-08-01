@@ -1,16 +1,13 @@
 # views/bonus_batch.py
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 import io
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.styles import Font, PatternFill, Alignment
-# ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
-# 導入 TimeoutException 以便捕捉特定錯誤
 from selenium.common.exceptions import TimeoutException
-# ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
 
 from services import bonus_scraper as scraper
@@ -159,6 +156,53 @@ def show_page(conn):
         )
         st.session_state.bonus_details_df = edited_df
 
+        st.markdown("---")
+        with st.expander("✨ 手動新增單筆明細"):
+            with st.form("add_bonus_detail_form", clear_on_submit=True):
+                st.markdown("###### *為必填欄位*")
+                c1, c2, c3 = st.columns(3)
+                salesperson = c1.selectbox("業務員姓名*", options=employee_list, index=None)
+                item_name = c2.text_input("帳款名稱*")
+                received_amount = c3.number_input("實收金額*", min_value=0, step=100)
+                
+                c4, c5, c6 = st.columns(3)
+                receivable_amount = c4.number_input("應收金額*", min_value=0, step=100)
+                employer_name = c5.text_input("雇主姓名")
+                worker_name = c6.text_input("外勞姓名")
+
+                c7, c8, c9 = st.columns(3)
+                received_date = c7.date_input("收款日*", value=date.today())
+                bill_date = c8.date_input("帳款日*", value=None)
+                entry_date = c9.date_input("入境日", value=None)
+                
+                seq_no = st.text_input("序號 (可選填)")
+
+                if st.form_submit_button("新增此筆明細", type="primary"):
+                    if not all([salesperson, item_name, received_amount, receivable_amount]):
+                        st.warning("請填寫所有標示 * 的必填欄位。")
+                    else:
+                        new_record = {
+                            "序號": seq_no,
+                            "雇主姓名": employer_name,
+                            "入境日": entry_date,
+                            "外勞姓名": worker_name,
+                            "帳款名稱": item_name,
+                            "帳款日": bill_date,
+                            "應收金額": receivable_amount,
+                            "收款日": received_date,
+                            "實收金額": received_amount,
+                            "業務員姓名": salesperson,
+                            "source": "manual"
+                        }
+                        
+                        new_row_df = pd.DataFrame([new_record])
+                        st.session_state.bonus_details_df = pd.concat(
+                            [st.session_state.bonus_details_df, new_row_df],
+                            ignore_index=True
+                        )
+                        st.success(f"已成功新增一筆明細至上方表格，請記得點擊「儲存草稿」。")
+                        st.rerun()
+
         btn_c1, btn_c2 = st.columns(2)
         with btn_c1:
             if st.button("💾 儲存草稿", use_container_width=True):
@@ -181,7 +225,6 @@ def show_page(conn):
                     submitted = st.form_submit_button("執行資料抓取 (會覆蓋現有草稿)", type="primary")
 
                     if submitted:
-                        # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
                         try:
                             progress_bar = st.progress(0, text="準備開始...")
                             with st.spinner("正在獲取員工名單..."):
@@ -211,7 +254,6 @@ def show_page(conn):
                             st.error(f"抓取資料時發生逾時錯誤：{e}")
                         except Exception as e:
                             st.error(f"抓取資料時發生未知錯誤：{e}")
-                        # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
     with tab2:
         st.subheader("步驟 2: 計算獎金總覽")
@@ -296,7 +338,6 @@ def show_page(conn):
                         with cols[i % num_columns]:
                             person_df = final_df[final_df['業務員姓名'] == person]
                             
-                            # --- 【核心修改】在傳遞給 Excel 產生器前，先過濾掉異常項目 ---
                             person_df_normal_only = person_df[~person_df['實收金額'].astype(str).str.contains(r'\*', na=False)].copy()
                             
                             excel_data = generate_single_person_excel(person_df_normal_only, person, hist_year, hist_month)
