@@ -38,7 +38,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V26: 新增兼職人員二代健保補充保費計算邏輯
+    薪資試算引擎 V27: 修正二代健保兼職與高額獎金的計算邏輯互斥問題
     """
     db_configs = q_config.get_all_configs(conn)
     MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
@@ -147,8 +147,7 @@ def calculate_salary_df(conn, year, month):
         
         # 二代健保補充保費計算 (邏輯分流)
         earning_cols_for_bonus = [col for col, type in item_types.items() if type == 'earning']
-        current_month_total_earnings = sum(details.get(item, 0) for item in earning_cols_for_bonus)
-
+        
         if is_insured_in_company:
             # 情況一：公司有加保 (計算高額獎金補充保費)
             current_month_bonus = sum(details.get(item, 0) for item in NHI_BONUS_ITEMS if item in details)
@@ -163,11 +162,13 @@ def calculate_salary_df(conn, year, month):
                     if this_month_premium > 0:
                         details['二代健保(高額獎金)'] = -int(this_month_premium)
         else:
-            if current_month_total_earnings > 0:
-                part_time_premium = round(current_month_total_earnings * NHI_SUPPLEMENT_RATE)
+            # 情況二：公司無加保 (計算兼職所得補充保費)
+            total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols_for_bonus)
+            if total_earnings_for_part_time > 0:
+                part_time_premium = round(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
                 if part_time_premium > 0:
                     details['二代健保(兼職)'] = -int(part_time_premium)
-
+        
         all_salary_data.append(details)
     return pd.DataFrame(all_salary_data).fillna(0), item_types
 

@@ -4,6 +4,7 @@
 包含：員工加退保歷史、勞健保級距表管理。
 """
 import pandas as pd
+from datetime import timedelta, date
 from utils.helpers import get_monthly_dates
 
 def get_all_insurance_history(conn):
@@ -137,7 +138,12 @@ def batch_add_or_update_insurance_history(conn, df: pd.DataFrame):
 
 def is_employee_insured_in_month(conn, employee_id: int, year: int, month: int):
     """檢查員工在指定月份是否在公司有加保紀錄。"""
-    _, month_end = get_monthly_dates(year, month)
+    month_start = date(year, month, 1).strftime('%Y-%m-%d')
+    if month == 12:
+        month_end = date(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        month_end = date(year, month + 1, 1) - timedelta(days=1)
+    month_end = month_end.strftime('%Y-%m-%d')
     query = """
     SELECT 1 FROM employee_company_history
     WHERE employee_id = ?
@@ -146,8 +152,9 @@ def is_employee_insured_in_month(conn, employee_id: int, year: int, month: int):
     LIMIT 1;
     """
     cursor = conn.cursor()
-    result = cursor.execute(query, (employee_id, month_end, month_end)).fetchone()
+    result = cursor.execute(query, (employee_id, month_end, month_start)).fetchone()
     return result is not None
+
 
 def get_insurance_salary_level(conn, base_salary: float):
     """根據薪資查詢對應的健保投保級距金額(上限)。"""
