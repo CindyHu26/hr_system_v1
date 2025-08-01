@@ -8,7 +8,6 @@ from dateutil.relativedelta import relativedelta
 from db import queries_attendance as q_att
 from db import queries_employee as q_emp
 from services import attendance_logic as logic_att
-from services.salary_logic import HOURLY_RATE_DIVISOR
 
 def show_page(conn):
     st.header("📅 出勤紀錄管理")
@@ -57,9 +56,7 @@ def show_page(conn):
 
                         if st.form_submit_button("確認修改並重新計算時數", type="primary"):
                             with st.spinner("正在重新計算並儲存..."):
-                                # 呼叫邏輯層進行計算
                                 new_minutes = logic_att.recalculate_attendance_minutes(new_checkin, new_checkout)
-                                # 更新資料庫
                                 q_att.update_attendance_record(conn, record_id, new_checkin, new_checkout, new_minutes)
                                 st.success(f"紀錄 ID:{record_id} 已更新！")
                                 st.rerun()
@@ -72,7 +69,6 @@ def show_page(conn):
             st.code(traceback.format_exc())
 
     with tab2:
-        # ... (此頁籤內容維持不變) ...
         st.subheader("從打卡機檔案批次匯入")
         st.info("系統將使用「姓名」作為唯一匹配依據，並自動忽略姓名中的所有空格。請確保打卡檔姓名與員工資料庫中的姓名一致。")
         

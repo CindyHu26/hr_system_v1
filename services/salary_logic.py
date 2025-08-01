@@ -46,7 +46,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V20: 簡化特殊不計薪日邏輯，改為依職稱 "舍監" 自動排除。
+    薪資試算引擎 V21: 統一手動健保費的計算邏輯
     """
     TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
     employees = q_emp.get_active_employees_for_month(conn, year, month)
@@ -54,13 +54,8 @@ def calculate_salary_df(conn, year, month):
     
     monthly_attendance = q_att.get_monthly_attendance_summary(conn, year, month)
     item_types = pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
-    
-    # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
-    # 預先載入特殊不計薪日即可，不再需要例外名單
     unpaid_days_df = pd.read_sql_query(f"SELECT date FROM special_unpaid_days WHERE strftime('%Y-%m', date) = '{year}-{month:02d}'", conn)
     unpaid_dates = set(pd.to_datetime(unpaid_days_df['date']).dt.date)
-    # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
-
     all_salary_data = []
 
     for emp in employees:
@@ -74,13 +69,10 @@ def calculate_salary_df(conn, year, month):
         hourly_rate = base_salary / config.HOURLY_RATE_DIVISOR if config.HOURLY_RATE_DIVISOR > 0 else 0
         details['底薪'] = base_salary
 
-        # 特殊不計薪日邏輯
         if emp['title'] != '舍監':
             unpaid_days_count = len(unpaid_dates)
             if unpaid_days_count > 0:
-                daily_wage = round(base_salary / 30)
-                unpaid_deduction = daily_wage * unpaid_days_count
-                details['無薪假'] = -int(unpaid_deduction)
+                details['無薪假'] = -int(round((base_salary / 30) * unpaid_days_count))
 
         entry_date_str = emp['entry_date']
         if pd.notna(entry_date_str):
@@ -89,11 +81,10 @@ def calculate_salary_df(conn, year, month):
                 last_anniversary_year_start = date(year - 1, entry_date.month, entry_date.day)
                 last_anniversary_year_end = last_anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
                 service_at_start = relativedelta(last_anniversary_year_start, entry_date)
-                service_years = service_at_start.years + service_at_start.months / 12 + service_at_start.days / 365.25
+                service_years = service_at_start.years + service_at_start.months / 12
                 total_entitled_days = calculate_leave_entitlement(service_years)
                 used_hours = q_att.get_leave_hours_for_period(conn, emp_id, '特休', last_anniversary_year_start, last_anniversary_year_end)
-                used_days = round(used_hours / 8, 2)
-                unused_days = total_entitled_days - used_days
+                unused_days = total_entitled_days - (used_hours / 8)
                 if unused_days > 0:
                     details['特休未休'] = int(round(unused_days * (base_salary / 30)))
 
@@ -116,14 +107,31 @@ def calculate_salary_df(conn, year, month):
         if insurance_salary > 0:
             auto_labor_fee, auto_health_fee = calculate_single_employee_insurance(conn, insurance_salary, base_info['dependents_under_18'], base_info['dependents_over_18'], emp['nhi_status'], emp['nhi_status_expiry'], year, month)
             details['勞保費'] = -int(base_info['labor_insurance_override'] if pd.notna(base_info['labor_insurance_override']) else auto_labor_fee)
-            details['健保費'] = -int(base_info['health_insurance_override'] if pd.notna(base_info['health_insurance_override']) else auto_health_fee)
+            
+            health_override = base_info.get('health_insurance_override')
+            if pd.notna(health_override):
+                # 如果有手動值，將其視為個人基數重新計算總額
+                manual_health_base = int(health_override)
+                d_under_18 = float(base_info.get('dependents_under_18', 0) or 0)
+                d_over_18 = float(base_info.get('dependents_over_18', 0) or 0)
+                total_dependents_count = d_under_18 + d_over_18
+                health_ins_count = min(3, total_dependents_count)
+                final_health_fee = int(round(manual_health_base * (1 + health_ins_count)))
+                if emp['nhi_status'] == '自理':
+                    final_health_fee = 0
+                details['健保費'] = -final_health_fee
+            else:
+                details['健保費'] = -auto_health_fee
+            
             details['勞退提撥'] = int(base_info['pension_override'] if pd.notna(base_info['pension_override']) else round(insurance_salary * 0.06))
 
         if emp['nationality'] and emp['nationality'] != 'TW' and pd.notna(emp['entry_date']):
             entry_date = pd.to_datetime(emp['entry_date']).date()
             should_withhold = False
-            if year == entry_date.year and (entry_date.month >= 7 or month < entry_date.month + 6):
-                should_withhold = True
+            if year == entry_date.year:
+                if entry_date.month >= 7: should_withhold = True
+                else:
+                    if month < entry_date.month + 6: should_withhold = True
             elif year == entry_date.year + 1 and month <= 6:
                 should_withhold = True
             if should_withhold and insurance_salary > 0:
