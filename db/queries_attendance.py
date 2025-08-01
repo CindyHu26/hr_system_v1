@@ -299,3 +299,17 @@ def get_leave_details_by_month(conn, year: int, month: int):
     # 將 start_date 和 end_date 直接解析為日期時間格式
     df = pd.read_sql_query(query, conn, params=(month_str, month_str), parse_dates=['start_date', 'end_date'])
     return df
+
+def get_attendance_by_employee_month(conn, employee_id: int, year: int, month: int):
+    """根據員工ID和年月查詢其所有出勤紀錄。"""
+    month_str = f"{year}-{month:02d}"
+    query = """
+    SELECT
+        id, employee_id, date, checkin_time, checkout_time,
+        late_minutes, early_leave_minutes,
+        overtime1_minutes, overtime2_minutes
+    FROM attendance
+    WHERE employee_id = ? AND STRFTIME('%Y-%m', date) = ?
+    ORDER BY date ASC
+    """
+    return pd.read_sql_query(query, conn, params=(employee_id, month_str))
