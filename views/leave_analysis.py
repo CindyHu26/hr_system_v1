@@ -5,7 +5,6 @@ from datetime import datetime
 import traceback
 from dateutil.relativedelta import relativedelta
 
-import config
 from services import leave_logic as logic_leave
 from db import queries_attendance as q_att
 from db import queries_config as q_config

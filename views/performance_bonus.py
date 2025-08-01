@@ -4,33 +4,23 @@ import pandas as pd
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import traceback
-
-import config
 from services import performance_bonus_logic as logic_perf
 
 def show_page(conn):
     st.header("🏆 績效獎金計算")
-    st.info("此功能將分步執行：抓取數據 -> 確認人數 -> 分配與微調 -> 存檔。")
+    st.info("此功能將分步執行：抓取數據 → 確認人數 → 分配與微調 → 存檔。")
 
-    # --- Session State 初始化 ---
     if 'perf_bonus_step' not in st.session_state:
         st.session_state.perf_bonus_step = 1
     if 'perf_bonus_data' not in st.session_state:
         st.session_state.perf_bonus_data = {}
 
-    # --- 【新增】顯示來自其他步驟的提示訊息 ---
     if 'perf_bonus_message' in st.session_state:
         msg = st.session_state.perf_bonus_message
         if msg['type'] == 'warning':
             st.warning(msg['text'])
-        # 顯示後就清除，避免重複顯示
         del st.session_state.perf_bonus_message
 
-    # --- 檢查 URL 設定 ---
-    if not config.PERFORMANCE_BONUS_URL:
-        st.error("錯誤：請先在您的 .env 檔案中設定 PERFORMANCE_BONUS_URL 的值。")
-        st.code("PERFORMANCE_BONUS_URL=http://your_system_ip/path/to/page.php")
-        return
 
     # ==================== 步驟 1: 輸入資訊並抓取人數 ====================
     if st.session_state.perf_bonus_step == 1:
@@ -86,16 +76,15 @@ def show_page(conn):
                 try:
                     eligible_df = logic_perf.get_eligible_employees(conn, data['year'], data['month'])
                     if eligible_df.empty:
-                        # 【核心修改】將警告訊息存入 session state
                         st.session_state.perf_bonus_message = {
                             "type": "warning",
                             "text": f"注意：在 {data['year']} 年 {data['month']} 月中找不到任何出勤紀錄，無法分配獎金。請先至「出勤紀錄管理」頁面匯入該月份的打卡資料。"
                         }
-                        st.session_state.perf_bonus_step = 1 # 退回第一步
+                        st.session_state.perf_bonus_step = 1
                     else:
                         eligible_df['bonus_amount'] = bonus_per_person
                         st.session_state.perf_bonus_data['distribution_df'] = eligible_df
-                        st.session_state.perf_bonus_step = 3 # 進入下一步
+                        st.session_state.perf_bonus_step = 3
                     st.rerun()
                 except Exception as e:
                     st.error(f"查詢員工時發生錯誤：{e}")

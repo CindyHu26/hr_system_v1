@@ -2,24 +2,32 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import config
+from db import queries_config as q_config
 from services import reporting_logic as logic_report
 
 def show_page(conn):
     st.header("健保補充保費試算 (個人高額獎金)")
     st.info("本頁面將依健保署規定，試算每位員工**全年度**因領取高額獎金（如年終、三節獎金等）而需負擔的補充保費。")
     
-    with st.expander("點此查看計算規則"):
-        st.markdown(f"""
-        #### 計算公式
-        當員工**單次**領取的獎金，或**當年度累計**的獎金總額，超過其 **當月投保金額4倍** 的門檻時，**就超過的部分**，應按補充保險費率 ({config.NHI_SUPPLEMENT_RATE * 100:.2f}%) 計算補充保費。
+    # 從資料庫動態讀取參數以顯示說明
+    try:
+        db_configs = q_config.get_all_configs(conn)
+        nhi_rate = float(db_configs.get('NHI_SUPPLEMENT_RATE', 0.0211))
+        bonus_multiplier = int(float(db_configs.get('NHI_BONUS_MULTIPLIER', 4)))
         
-        - **應繳保費 = 應計費金額 × {config.NHI_SUPPLEMENT_RATE * 100:.2f}%**
-        - **應計費金額 = 期間獎金總額 - (期間結束時的月投保薪資 × 4)**
+        with st.expander("點此查看計算規則"):
+            st.markdown(f"""
+            #### 計算公式
+            當員工**單次**領取的獎金，或**當年度累計**的獎金總額，超過其 **當月投保金額 {bonus_multiplier} 倍** 的門檻時，**就超過的部分**，應按補充保險費率 ({nhi_rate * 100:.2f}%) 計算補充保費。
+            
+            - **應繳保費 = 應計費金額 × {nhi_rate * 100:.2f}%**
+            - **應計費金額 = 期間獎金總額 - (期間結束時的月投保薪資 × {bonus_multiplier})**
+            
+            *注意：本系統會加總所有在「系統參數設定」中被定義為獎金的薪資項目。*
+            """)
+    except Exception as e:
+        st.error(f"讀取系統設定時發生錯誤: {e}")
         
-        *注意：本系統會加總所有在 `config.py` 中被定義為獎金的薪資項目。*
-        """)
-
     current_year = datetime.now().year
     year = st.number_input("選擇要計算的年份", min_value=2020, max_value=current_year + 1, value=current_year -1)
 

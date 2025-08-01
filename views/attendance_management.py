@@ -47,15 +47,20 @@ def show_page(conn):
                     with st.form(f"edit_attendance_{record_id}"):
                         st.write(f"正在修改 **{record_data['name_ch']}** 於 **{record_data['date']}** 的紀錄")
                         
-                        current_checkin = datetime.strptime(record_data['checkin_time'], '%H:%M:%S').time() if record_data['checkin_time'] else time(8, 30)
-                        current_checkout = datetime.strptime(record_data['checkout_time'], '%H:%M:%S').time() if record_data['checkout_time'] else time(17, 30)
+                        # 使用 try-except 處理無效的時間格式 (例如 '-')
+                        try:
+                            current_checkin = datetime.strptime(record_data['checkin_time'], '%H:%M:%S').time()
+                        except (TypeError, ValueError):
+                            current_checkin = time(8, 30)
+
+                        try:
+                            current_checkout = datetime.strptime(record_data['checkout_time'], '%H:%M:%S').time()
+                        except (TypeError, ValueError):
+                            current_checkout = time(17, 30)
 
                         c1_edit, c2_edit = st.columns(2)
-                        # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
-                        # 新增 step=60 參數，讓時間可以逐分鐘選擇
                         new_checkin = c1_edit.time_input("新的簽到時間", value=current_checkin, step=60)
                         new_checkout = c2_edit.time_input("新的簽退時間", value=current_checkout, step=60)
-                        # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
                         if st.form_submit_button("確認修改並重新計算時數", type="primary"):
                             with st.spinner("正在重新計算並儲存..."):
