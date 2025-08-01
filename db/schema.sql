@@ -1,6 +1,23 @@
 -- db/schema.sql
 -- 此檔案定義了所有人資系統資料表的結構。
 
+-- 系統通用參數設定表 (Key-Value Store)
+CREATE TABLE IF NOT EXISTS system_config (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    description TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 系統參數 - 基本工資歷史紀錄表
+CREATE TABLE IF NOT EXISTS minimum_wage_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    year INTEGER NOT NULL UNIQUE,
+    wage INTEGER NOT NULL,
+    effective_date DATE,
+    note TEXT
+);
+
 -- 員工主資料表
 CREATE TABLE IF NOT EXISTS employee (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name_ch TEXT NOT NULL, id_no TEXT NOT NULL UNIQUE,

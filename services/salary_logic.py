@@ -1,6 +1,5 @@
 # services/salary_logic.py
 import pandas as pd
-import config
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
@@ -12,34 +11,45 @@ from db import queries_insurance as q_ins
 from db import queries_bonus as q_bonus
 from db import queries_performance_bonus as q_perf
 from db import queries_allowances as q_allow
+from db import queries_config as q_config
 from services import overtime_logic
 from views.annual_leave import calculate_leave_entitlement
 
 def calculate_single_employee_insurance(conn, insurance_salary, dependents_under_18, dependents_over_18, nhi_status, nhi_status_expiry, year, month):
     if not insurance_salary or insurance_salary <= 0: return 0, 0
     labor_fee, health_fee_base = q_ins.get_employee_insurance_fee(conn, insurance_salary, year, month)
-    total_health_fee = 0
     d_under_18 = float(dependents_under_18 or 0)
     d_over_18 = float(dependents_over_18 or 0)
     expiry_date = pd.to_datetime(nhi_status_expiry, errors='coerce').date() if pd.notna(nhi_status_expiry) else None
     is_expired = expiry_date < date(year, month, 1) if expiry_date else False
 
-    if nhi_status == '自理':
-        total_health_fee = 0
-    elif nhi_status == '低收入戶' and not is_expired:
+    if nhi_status == '自理': return int(round(labor_fee)), 0
+    if nhi_status == '低收入戶' and not is_expired:
         total_health_fee = health_fee_base * (0.5 + (d_over_18 * 0.5))
     else:
-        total_dependents_count = d_under_18 + d_over_18
-        health_ins_count = min(3, total_dependents_count)
+        health_ins_count = min(3, d_under_18 + d_over_18)
         total_health_fee = health_fee_base * (1 + health_ins_count)
     return int(round(labor_fee)), int(round(total_health_fee))
 
-
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V22: 整合不計薪假直接扣除底薪的邏輯。
+    薪資試算引擎 V24: 全面改為從資料庫讀取動態系統參數。
     """
-    TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
+    # 從資料庫動態獲取所有計算參數
+    db_configs = q_config.get_all_configs(conn)
+    MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
+    if MINIMUM_WAGE_OF_YEAR == 0:
+        raise ValueError(f"錯誤：找不到 {year} 年的基本工資設定，請至「系統參數設定」頁面新增。")
+    
+    HOURLY_RATE_DIVISOR = float(db_configs.get('HOURLY_RATE_DIVISOR', '240.0'))
+    NHI_SUPPLEMENT_RATE = float(db_configs.get('NHI_SUPPLEMENT_RATE', '0.0211'))
+    NHI_BONUS_MULTIPLIER = int(db_configs.get('NHI_BONUS_MULTIPLIER', '4'))
+    NHI_BONUS_ITEMS = [item.strip() for item in db_configs.get('NHI_BONUS_ITEMS', '').split(',')]
+    FOREIGNER_MULTIPLIER = float(db_configs.get('FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER', '1.5'))
+    FOREIGNER_LOW_RATE = float(db_configs.get('FOREIGNER_LOW_INCOME_TAX_RATE', '0.06'))
+    FOREIGNER_HIGH_RATE = float(db_configs.get('FOREIGNER_HIGH_INCOME_TAX_RATE', '0.18'))
+    TAX_THRESHOLD = MINIMUM_WAGE_OF_YEAR * FOREIGNER_MULTIPLIER
+
     employees = q_emp.get_active_employees_for_month(conn, year, month)
     if not employees: return pd.DataFrame(), {}
     
@@ -58,25 +68,24 @@ def calculate_salary_df(conn, year, month):
         base_salary = base_info['base_salary']
         insurance_salary = base_info['insurance_salary'] or base_salary
         
-        # 特殊不計薪日邏輯: 直接從底薪扣除
         adjusted_base_salary = base_salary
-        if emp['title'] != '舍監':
-            unpaid_days_count = len(unpaid_dates)
-            if unpaid_days_count > 0:
-                daily_wage = round(base_salary / 30)
-                unpaid_deduction = daily_wage * unpaid_days_count
-                adjusted_base_salary -= unpaid_deduction
+        if emp['title'] != '舍監' and len(unpaid_dates) > 0:
+            adjusted_base_salary -= round(base_salary / 30) * len(unpaid_dates)
+        
+        if base_salary == MINIMUM_WAGE_OF_YEAR and adjusted_base_salary < MINIMUM_WAGE_OF_YEAR:
+            adjusted_base_salary = MINIMUM_WAGE_OF_YEAR
         
         details['底薪'] = int(round(adjusted_base_salary))
-        hourly_rate = base_salary / config.HOURLY_RATE_DIVISOR if config.HOURLY_RATE_DIVISOR > 0 else 0
+        hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
+        
+        # (後續所有計算邏輯，現在都使用從資料庫讀取到的參數)
         entry_date_str = emp['entry_date']
         if pd.notna(entry_date_str):
             entry_date = pd.to_datetime(entry_date_str).date()
             if entry_date.month == month:
                 last_anniversary_year_start = date(year - 1, entry_date.month, entry_date.day)
                 last_anniversary_year_end = last_anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
-                service_at_start = relativedelta(last_anniversary_year_start, entry_date)
-                service_years = service_at_start.years + service_at_start.months / 12
+                service_years = (last_anniversary_year_start - entry_date).days / 365.25
                 total_entitled_days = calculate_leave_entitlement(service_years)
                 used_hours = q_att.get_leave_hours_for_period(conn, emp_id, '特休', last_anniversary_year_start, last_anniversary_year_end)
                 unused_days = total_entitled_days - (used_hours / 8)
@@ -107,11 +116,9 @@ def calculate_salary_df(conn, year, month):
                 manual_health_base = int(health_override)
                 d_under_18 = float(base_info['dependents_under_18'] or 0)
                 d_over_18 = float(base_info['dependents_over_18'] or 0)
-                total_dependents_count = d_under_18 + d_over_18
-                health_ins_count = min(3, total_dependents_count)
+                health_ins_count = min(3, d_under_18 + d_over_18)
                 final_health_fee = int(round(manual_health_base * (1 + health_ins_count)))
-                if emp['nhi_status'] == '自理':
-                    final_health_fee = 0
+                if emp['nhi_status'] == '自理': final_health_fee = 0
                 details['健保費'] = -final_health_fee
             else:
                 details['健保費'] = -auto_health_fee
@@ -119,15 +126,10 @@ def calculate_salary_df(conn, year, month):
 
         if emp['nationality'] and emp['nationality'] != 'TW' and pd.notna(emp['entry_date']):
             entry_date = pd.to_datetime(emp['entry_date']).date()
-            should_withhold = False
-            if year == entry_date.year:
-                if entry_date.month >= 7: should_withhold = True
-                else:
-                    if month < entry_date.month + 6: should_withhold = True
-            elif year == entry_date.year + 1 and month <= 6:
-                should_withhold = True
+            should_withhold = (year == entry_date.year and (entry_date.month >= 7 or month < entry_date.month + 6)) or \
+                              (year == entry_date.year + 1 and month <= 6)
             if should_withhold and insurance_salary > 0:
-                tax_rate = config.FOREIGNER_LOW_INCOME_TAX_RATE if base_salary <= TAX_THRESHOLD else config.FOREIGNER_HIGH_INCOME_TAX_RATE
+                tax_rate = FOREIGNER_LOW_RATE if base_salary <= TAX_THRESHOLD else FOREIGNER_HIGH_RATE
                 details['稅款'] = -int(round(insurance_salary * tax_rate))
         
         special_ot_pay = overtime_logic.calculate_special_overtime_pay(conn, emp_id, year, month, hourly_rate)
@@ -138,14 +140,14 @@ def calculate_salary_df(conn, year, month):
         if perf_bonus_result: details['績效獎金'] = int(round(perf_bonus_result))
 
         if q_ins.is_employee_insured_in_month(conn, emp_id, year, month):
-            current_month_bonus = sum(details.get(item, 0) for item in config.NHI_BONUS_ITEMS if item in details)
+            current_month_bonus = sum(details.get(item, 0) for item in NHI_BONUS_ITEMS if item in details)
             if current_month_bonus > 0:
-                cumulative_bonus, already_deducted = q_records.get_cumulative_bonus_for_year(conn, emp_id, year, config.NHI_BONUS_ITEMS)
+                cumulative_bonus, already_deducted = q_records.get_cumulative_bonus_for_year(conn, emp_id, year, NHI_BONUS_ITEMS)
                 total_cumulative_bonus = cumulative_bonus + current_month_bonus
-                deduction_threshold = insurance_salary * config.NHI_BONUS_MULTIPLIER
+                deduction_threshold = insurance_salary * NHI_BONUS_MULTIPLIER
                 if total_cumulative_bonus > deduction_threshold:
                     taxable_bonus = total_cumulative_bonus - deduction_threshold
-                    total_premium_due = round(taxable_bonus * config.NHI_SUPPLEMENT_RATE)
+                    total_premium_due = round(taxable_bonus * NHI_SUPPLEMENT_RATE)
                     this_month_premium = total_premium_due - already_deducted
                     if this_month_premium > 0:
                         details['二代健保補充費'] = -int(this_month_premium)
@@ -153,6 +155,7 @@ def calculate_salary_df(conn, year, month):
         all_salary_data.append(details)
     return pd.DataFrame(all_salary_data).fillna(0), item_types
 
+# ... (process_batch_salary_update_excel 函式維持不變) ...
 def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
     report = {"success": 0, "skipped_emp": [], "skipped_item": [], "no_salary_record": []}
     try:

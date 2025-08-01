@@ -1,7 +1,12 @@
 # app.py
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 from db.db_manager import init_connection
 from views import (
+    config_management,
     employee_management,
     company_management,
     insurance_history,
@@ -56,6 +61,7 @@ PAGES_SALARY = {
     "⚙️ 薪資項目管理": salary_item_management,
     "🏦 勞健保級距管理": insurance_grade_management,
     "➕ 員工常態薪資項設定": allowance_setting,
+    "🔧 系統參數設定": config_management,
 }
 
 PAGES_REPORTING = {

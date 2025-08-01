@@ -1,13 +1,12 @@
-# pages/insurance_grade_management.py
+# views/insurance_grade_management.py
 import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime, date
 
-# 導入新架構的模組
-import config
 from db import queries_insurance as q_ins
 from db import queries_common as q_common
+from db import queries_config as q_config # <-- 新增 import
 from services import insurance_logic as logic_ins
 
 COLUMN_MAP = {
@@ -73,7 +72,10 @@ def show_page(conn):
 
     with tab2:
         st.markdown("##### 更新健保投保金額分級表")
-        health_url = st.text_input("健保署保費負擔金額表網址", value=config.HEALTH_INSURANCE_URL)
+        # 從資料庫讀取網址
+        db_configs = q_config.get_all_configs(conn)
+        default_health_url = db_configs.get('HEALTH_INSURANCE_URL', "https://www.nhi.gov.tw/ch/cp-17545-f87bd-2576-1.html")
+        health_url = st.text_input("健保署保費負擔金額表網址", value=default_health_url)
         if st.button("🔗 從網址解析並預覽"):
             try:
                 with st.spinner(f"正在從 {health_url} 下載網頁內容..."):

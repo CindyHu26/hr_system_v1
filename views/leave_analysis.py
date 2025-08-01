@@ -8,6 +8,7 @@ from dateutil.relativedelta import relativedelta
 import config
 from services import leave_logic as logic_leave
 from db import queries_attendance as q_att
+from db import queries_config as q_config
 
 def show_page(conn):
     st.header("🌴 請假紀錄匯入與分析")
@@ -27,7 +28,9 @@ def show_page(conn):
         year, month = None, None
         
         if source_type == "Google Sheet (建議)":
-            source_input = st.text_input("輸入 Google Sheet 分享連結", value=config.DEFAULT_GSHEET_URL)
+            db_configs = q_config.get_all_configs(conn)
+            default_gsheet_url = db_configs.get('DEFAULT_GSHEET_URL', "")
+            source_input = st.text_input("輸入 Google Sheet 分享連結", value=default_gsheet_url)
             st.markdown("##### 篩選匯入月份 (僅針對 Google Sheet)")
             
             today = datetime.now()
