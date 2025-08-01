@@ -270,3 +270,9 @@ def update_salary_preview_data(conn, year: int, month: int, df_to_update: pd.Dat
         return len(df_to_update)
     except Exception as e:
         conn.rollback(); raise e
+    
+def check_if_final_records_exist(conn, year: int, month: int) -> bool:
+    """檢查指定月份是否存在任何已定版 ('final') 的薪資紀錄。"""
+    query = "SELECT 1 FROM salary WHERE year = ? AND month = ? AND status = 'final' LIMIT 1"
+    result = conn.execute(query, (year, month)).fetchone()
+    return result is not None

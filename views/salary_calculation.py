@@ -19,11 +19,18 @@ def show_page(conn):
     month = c2.number_input("選擇月份", min_value=1, max_value=12, value=last_month.month)
 
     st.write("---")
-    
+
+    # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
+    # 在渲染按鈕前，先檢查是否存在已定版的紀錄
+    final_records_exist = q_records.check_if_final_records_exist(conn, year, month)
+    # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
+
     action_c1, action_c2 = st.columns(2)
 
     with action_c1:
-        if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會根據最新的出勤、假單等資料重新計算，並覆蓋現有草稿。"):
+        # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
+        # 根據檢查結果，動態設定按鈕的 disabled 狀態
+        if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會根據最新的出勤、假單等資料重新計算，並覆蓋現有草稿。", disabled=final_records_exist):
             with st.spinner("正在根據最新資料計算全新草稿..."):
                 try:
                     new_draft_df, _ = logic_salary.calculate_salary_df(conn, year, month)
@@ -38,6 +45,9 @@ def show_page(conn):
                 except Exception as e:
                     st.error("產生草稿時發生錯誤！")
                     st.code(traceback.format_exc())
+    
+    if final_records_exist:
+        st.warning(f"🔒 {year}年{month}月的薪資單已定版。如需重新計算，請先至下方的「進階操作」區塊解鎖相關人員。")
 
     with action_c2:
         if st.button("🔄 讀取已儲存的薪資資料", type="primary"):
