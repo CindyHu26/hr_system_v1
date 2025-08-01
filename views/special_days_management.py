@@ -6,17 +6,28 @@ from db import queries_common as q_common
 
 def show_page(conn):
     st.header("🌀 特殊日期管理 (不計薪假)")
+    # 更新說明文字，使其符合新的自動化邏輯
     st.info("您可以在此設定全公司通用的不計薪日期（例如颱風假）。系統會自動排除職稱為「舍監」的員工，使其正常支薪。")
 
     try:
+        # 簡化查詢，不再需要 JOIN 例外表
         special_days_df = pd.read_sql_query("SELECT id, date, description FROM special_unpaid_days ORDER BY date DESC", conn)
-        st.dataframe(special_days_df, use_container_width=True)
+        
+        # 將欄位名稱中文化
+        display_df = special_days_df.rename(columns={
+            'id': '紀錄ID',
+            'date': '日期',
+            'description': '事由'
+        })
+        st.dataframe(display_df, use_container_width=True)
+
     except Exception as e:
         st.error(f"讀取特殊日期時發生錯誤: {e}")
         special_days_df = pd.DataFrame()
 
     st.markdown("---")
     
+    # 簡化頁籤，移除管理例外人員的功能
     tab1, tab2 = st.tabs([" ✨ 新增特殊日期", "🗑️ 刪除特殊日期"])
 
     with tab1:
