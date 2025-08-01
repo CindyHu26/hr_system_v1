@@ -58,10 +58,10 @@ PAGES_SALARY = {
     "2️⃣ 績效獎金計算": performance_bonus,
     "3️⃣ 業務獎金批次匯入": bonus_batch,
     "4️⃣ 薪資單產生與鎖定": salary_calculation,
-    "⚙️ 薪資項目管理": salary_item_management,
-    "🏦 勞健保級距管理": insurance_grade_management,
     "➕ 員工常態薪資項設定": allowance_setting,
+    "🏦 勞健保級距管理": insurance_grade_management,
     "🔧 系統參數設定": config_management,
+    "⚙️ 薪資項目管理": salary_item_management,
 }
 
 PAGES_REPORTING = {
@@ -86,11 +86,7 @@ page_groups = {
 
 selected_group = st.sidebar.selectbox("選擇功能區塊", list(page_groups.keys()))
 
-# [修改] 動態排序薪資與報表功能頁面
-if selected_group in ["薪資核心功能"]:
-    page_list = sorted(page_groups[selected_group])
-else:
-    page_list = page_groups[selected_group]
+page_list = page_groups[selected_group]
 
 selected_page_name = st.sidebar.radio(
     f"--- {selected_group} ---",

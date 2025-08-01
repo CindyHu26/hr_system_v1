@@ -16,12 +16,12 @@ def get_employee_map(conn):
     return df
     
 def get_active_employees_for_month(conn, year, month):
-    """查詢指定月份仍在職的員工，並包含健保狀態。"""
+    """查詢指定月份仍在職的員工，並包含健保狀態與職稱。"""
     start_date, end_date = get_monthly_dates(year, month)
-    # [核心修改] 選取新增的健保狀態與職稱欄位
+    
     query = """
     SELECT e.id, e.name_ch, e.hr_code, e.entry_date, e.nationality,
-           e.nhi_status, e.nhi_status_expiry, e.title
+           e.nhi_status, e.nhi_status_expiry, e.title, e.dept
     FROM employee e
     WHERE (e.entry_date IS NOT NULL AND e.entry_date <= ?) 
       AND (e.resign_date IS NULL OR e.resign_date = '' OR e.resign_date >= ?)

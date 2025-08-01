@@ -79,20 +79,20 @@ def calculate_salary_df(conn, year, month):
         details['底薪'] = int(round(adjusted_base_salary))
         hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
         
-        # (後續所有計算邏輯，現在都使用從資料庫讀取到的參數)
-        entry_date_str = emp['entry_date']
-        if pd.notna(entry_date_str):
-            entry_date = pd.to_datetime(entry_date_str).date()
-            if entry_date.month == month:
-                last_anniversary_year_start = date(year - 1, entry_date.month, entry_date.day)
-                last_anniversary_year_end = last_anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
-                service_years = (last_anniversary_year_start - entry_date).days / 365.25
-                total_entitled_days = calculate_leave_entitlement(service_years)
-                used_hours = q_att.get_leave_hours_for_period(conn, emp_id, '特休', last_anniversary_year_start, last_anniversary_year_end)
-                unused_days = total_entitled_days - (used_hours / 8)
-                if unused_days > 0:
-                    details['特休未休'] = int(round(unused_days * (base_salary / 30)))
-
+        if emp['dept'] in ['服務', '行政']:
+            entry_date_str = emp['entry_date']
+            if pd.notna(entry_date_str):
+                entry_date = pd.to_datetime(entry_date_str).date()
+                if entry_date.month == month:
+                    last_anniversary_year_start = date(year - 1, entry_date.month, entry_date.day)
+                    last_anniversary_year_end = last_anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
+                    service_years = (last_anniversary_year_start - entry_date).days / 365.25
+                    total_entitled_days = calculate_leave_entitlement(service_years)
+                    used_hours = q_att.get_leave_hours_for_period(conn, emp_id, '特休', last_anniversary_year_start, last_anniversary_year_end)
+                    unused_days = total_entitled_days - (used_hours / 8)
+                    if unused_days > 0:
+                        details['特休未休'] = int(round(unused_days * (base_salary / 30)))
+                        
         if emp_id in monthly_attendance.index:
             emp_att = monthly_attendance.loc[emp_id]
             if emp_att.get('late_minutes', 0) > 0: details['遲到'] = -int(round((emp_att['late_minutes'] / 60) * hourly_rate))
