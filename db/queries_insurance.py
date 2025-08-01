@@ -137,18 +137,14 @@ def batch_add_or_update_insurance_history(conn, df: pd.DataFrame):
     return report
 
 def is_employee_insured_in_month(conn, employee_id: int, year: int, month: int):
-    """檢查員工在指定月份是否在公司有加保紀錄。"""
-    month_start = date(year, month, 1).strftime('%Y-%m-%d')
-    if month == 12:
-        month_end = date(year + 1, 1, 1) - timedelta(days=1)
-    else:
-        month_end = date(year, month + 1, 1) - timedelta(days=1)
-    month_end = month_end.strftime('%Y-%m-%d')
+    """檢查員工在指定月份是否在公司有加保紀錄 (採用交集邏輯)。"""
+    month_start, month_end = get_monthly_dates(year, month)
+    # 增加對空字串 ('') 的判斷，使邏輯更穩健
     query = """
     SELECT 1 FROM employee_company_history
     WHERE employee_id = ?
-      AND start_date <= ?
-      AND (end_date IS NULL OR end_date >= ?)
+      AND date(start_date) <= date(?)
+      AND (end_date IS NULL OR end_date = '' OR date(end_date) >= date(?))
     LIMIT 1;
     """
     cursor = conn.cursor()

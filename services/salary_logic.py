@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 import os
+import math
 
 from db import queries_employee as q_emp
 from db import queries_attendance as q_att
@@ -163,9 +164,13 @@ def calculate_salary_df(conn, year, month):
                         details['二代健保(高額獎金)'] = -int(this_month_premium)
         else:
             # 情況二：公司無加保 (計算兼職所得補充保費)
-            total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols_for_bonus)
-            if total_earnings_for_part_time > 0:
-                part_time_premium = round(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
+            earning_cols = [col for col, type in item_types.items() if type == 'earning']
+            total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols)
+
+            # 只有當月總給付額 > 基本工資時才計算
+            if total_earnings_for_part_time > MINIMUM_WAGE_OF_YEAR:
+                # 使用 math.ceil 執行無條件進位
+                part_time_premium = math.ceil(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
                 if part_time_premium > 0:
                     details['二代健保(兼職)'] = -int(part_time_premium)
         
