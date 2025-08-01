@@ -37,7 +37,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V21: 統一手動健保費的計算邏輯
+    薪資試算引擎 V22: 整合不計薪假直接扣除底薪的邏輯。
     """
     TAX_THRESHOLD = config.MINIMUM_WAGE * config.FOREIGNER_TAX_RATE_THRESHOLD_MULTIPLIER
     employees = q_emp.get_active_employees_for_month(conn, year, month)
@@ -57,14 +57,18 @@ def calculate_salary_df(conn, year, month):
 
         base_salary = base_info['base_salary']
         insurance_salary = base_info['insurance_salary'] or base_salary
-        hourly_rate = base_salary / config.HOURLY_RATE_DIVISOR if config.HOURLY_RATE_DIVISOR > 0 else 0
-        details['底薪'] = base_salary
-
+        
+        # 特殊不計薪日邏輯: 直接從底薪扣除
+        adjusted_base_salary = base_salary
         if emp['title'] != '舍監':
             unpaid_days_count = len(unpaid_dates)
             if unpaid_days_count > 0:
-                details['無薪假'] = -int(round((base_salary / 30) * unpaid_days_count))
-
+                daily_wage = round(base_salary / 30)
+                unpaid_deduction = daily_wage * unpaid_days_count
+                adjusted_base_salary -= unpaid_deduction
+        
+        details['底薪'] = int(round(adjusted_base_salary))
+        hourly_rate = base_salary / config.HOURLY_RATE_DIVISOR if config.HOURLY_RATE_DIVISOR > 0 else 0
         entry_date_str = emp['entry_date']
         if pd.notna(entry_date_str):
             entry_date = pd.to_datetime(entry_date_str).date()
@@ -98,10 +102,7 @@ def calculate_salary_df(conn, year, month):
         if insurance_salary > 0:
             auto_labor_fee, auto_health_fee = calculate_single_employee_insurance(conn, insurance_salary, base_info['dependents_under_18'], base_info['dependents_over_18'], emp['nhi_status'], emp['nhi_status_expiry'], year, month)
             details['勞保費'] = -int(base_info['labor_insurance_override'] if pd.notna(base_info['labor_insurance_override']) else auto_labor_fee)
-            
-            # 將 .get() 修正為正確的 ['key'] 取值方式
             health_override = base_info['health_insurance_override']
-            
             if pd.notna(health_override):
                 manual_health_base = int(health_override)
                 d_under_18 = float(base_info['dependents_under_18'] or 0)
@@ -114,7 +115,6 @@ def calculate_salary_df(conn, year, month):
                 details['健保費'] = -final_health_fee
             else:
                 details['健保費'] = -auto_health_fee
-            
             details['勞退提撥'] = int(base_info['pension_override'] if pd.notna(base_info['pension_override']) else round(insurance_salary * 0.06))
 
         if emp['nationality'] and emp['nationality'] != 'TW' and pd.notna(emp['entry_date']):

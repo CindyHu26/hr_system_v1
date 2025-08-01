@@ -1,16 +1,9 @@
 # db/queries_salary_records.py
-"""
-資料庫查詢：專門處理每月的「薪資單紀錄(salary)」的儲存、讀取與狀態管理。
-"""
 import pandas as pd
 from utils.helpers import get_monthly_dates
 from db import queries_insurance as q_ins
 
 def get_salary_report_for_editing(conn, year, month):
-    """
-    薪資報表產生器: 從資料庫讀取資料，並處理草稿/定版邏輯後呈現。
-    V4: 【修正】修正勞健保費用加總的邏輯。
-    """
     start_date, end_date = get_monthly_dates(year, month)
     active_emp_df = pd.read_sql_query(
         "SELECT id as employee_id, name_ch as '員工姓名', hr_code as '員工編號' FROM employee WHERE (entry_date <= ?) AND (resign_date IS NULL OR resign_date = '' OR resign_date >= ?)",
@@ -30,23 +23,9 @@ def get_salary_report_for_editing(conn, year, month):
     """
     details_df = pd.read_sql_query(details_query, conn, params=(year, month))
 
-    def clean_text(x):
-        if isinstance(x, str):
-            return x.encode('utf-8', 'replace').decode('utf-8')
-        return x
-
-    if not details_df.empty:
-        details_df['item_name'] = details_df['item_name'].apply(clean_text)
-    if not active_emp_df.empty:
-        active_emp_df['員工姓名'] = active_emp_df['員工姓名'].apply(clean_text)
-
     pivot_details = pd.DataFrame()
     if not details_df.empty:
-        pivot_details = details_df.pivot_table(
-            index='employee_id', 
-            columns='item_name', 
-            values='amount'
-        ).reset_index()
+        pivot_details = details_df.pivot_table(index='employee_id', columns='item_name', values='amount').reset_index()
 
     report_df = pd.merge(active_emp_df, salary_main_df, on='employee_id', how='left')
     if not pivot_details.empty:
@@ -55,18 +34,13 @@ def get_salary_report_for_editing(conn, year, month):
     report_df['status'] = report_df['status'].fillna('draft')
     item_types = pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
 
-    for item in item_types.keys():
+    for item in list(item_types.keys()) + ['勞保費', '健保費']:
         if item not in report_df.columns:
             report_df[item] = 0
     report_df.fillna(0, inplace=True)
     
-    # --- 【核心修改】使用更穩健的方式加總勞健保費用 ---
-    # 確保欄位存在且為數字格式
-    labor_fee = pd.to_numeric(report_df.get('勞保費', 0), errors='coerce').fillna(0)
-    health_fee = pd.to_numeric(report_df.get('健保費', 0), errors='coerce').fillna(0)
-    report_df['勞健保'] = labor_fee + health_fee
+    report_df['勞健保'] = pd.to_numeric(report_df['勞保費'], errors='coerce').fillna(0) + pd.to_numeric(report_df['健保費'], errors='coerce').fillna(0)
     
-    # 從項目類型字典中移除原始項目，並加入合併後的項目
     if '勞保費' in item_types: del item_types['勞保費']
     if '健保費' in item_types: del item_types['健保費']
     item_types['勞健保'] = 'deduction'
@@ -98,7 +72,6 @@ def get_salary_report_for_editing(conn, year, month):
     return report_df[final_cols].sort_values(by='員工編號').reset_index(drop=True), item_types
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):
-    """儲存薪資草稿。"""
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
     item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
@@ -128,9 +101,10 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
             cursor.executemany("INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)", details_to_insert)
     conn.commit()
 
-
 def finalize_salary_records(conn, year, month, df: pd.DataFrame):
-    """【V3 修正版】加入匯入銀行與現金的特殊計算邏輯。"""
+    """
+    【V4 修正版】根據使用者指定的精確公式計算銀行與現金分配。
+    """
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
     
@@ -138,26 +112,21 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
         emp_id = emp_map.get(row['員工姓名'])
         if not emp_id: continue
         
-        is_insured = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
-        net_salary = row.get('實支金額', 0)
-        bank_transfer_amount = 0
+        base_salary = row.get('底薪', 0)
+        overtime_1 = row.get('加班費(延長工時)', 0)
+        overtime_2 = row.get('加班費(再延長工時)', 0)
+        total_overtime = overtime_1 + overtime_2
         
-        if not is_insured:
-            bank_transfer_amount = net_salary
-        else:
-            base_salary = row.get('底薪', 0)
-            overtime_1 = row.get('加班費(延長工時)', 0)
-            overtime_2 = row.get('加班費(再延長工時)', 0)
-            total_overtime = overtime_1 + overtime_2
-            
-            insurance_fee = row.get('勞健保', 0)
-            personal_leave = row.get('事假', 0)
-            sick_leave = row.get('病假', 0)
-            late_fee = row.get('遲到', 0)
-            early_leave_fee = row.get('早退', 0)
-            
-            bank_transfer_amount = base_salary + total_overtime + insurance_fee + personal_leave + sick_leave + late_fee + early_leave_fee
+        insurance_fee = row.get('勞健保', 0)
+        personal_leave = row.get('事假', 0)
+        sick_leave = row.get('病假', 0)
+        late_fee = row.get('遲到', 0)
+        early_leave_fee = row.get('早退', 0)
+        
+        # 注意：扣項的值本身是負數，所以直接相加即可
+        bank_transfer_amount = base_salary + total_overtime + insurance_fee + personal_leave + sick_leave + late_fee + early_leave_fee
 
+        net_salary = row.get('實支金額', 0)
         cash_amount = net_salary - bank_transfer_amount
         
         params = {
@@ -185,7 +154,6 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
     conn.commit()
 
 def revert_salary_to_draft(conn, year, month, employee_ids: list):
-    """將已定版的薪資紀錄恢復為草稿狀態。"""
     if not employee_ids: return 0
     cursor = conn.cursor()
     placeholders = ','.join('?' for _ in employee_ids)
@@ -196,12 +164,10 @@ def revert_salary_to_draft(conn, year, month, employee_ids: list):
     return cursor.rowcount
 
 def batch_upsert_salary_details(conn, data_to_upsert: list):
-    """批次更新或插入薪資明細 (Upsert)。"""
     if not data_to_upsert: return 0
     cursor = conn.cursor()
     try:
         cursor.execute("BEGIN TRANSACTION")
-        # 確保 unique index 存在，這是 ON CONFLICT 的前提
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_salary_item ON salary_detail (salary_id, salary_item_id);")
         sql = """
             INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)
@@ -214,16 +180,11 @@ def batch_upsert_salary_details(conn, data_to_upsert: list):
         conn.rollback(); raise e
 
 def get_annual_salary_summary_data(conn, year: int, item_ids: list):
-    """獲取年度薪資總表的原始資料。"""
-    if not item_ids:
-        return pd.DataFrame()
+    if not item_ids: return pd.DataFrame()
     placeholders = ','.join('?' for _ in item_ids)
     query = f"""
     SELECT
-        e.hr_code as '員工編號',
-        e.name_ch as '員工姓名',
-        s.month,
-        SUM(sd.amount) as monthly_total
+        e.hr_code as '員工編號', e.name_ch as '員工姓名', s.month, SUM(sd.amount) as monthly_total
     FROM salary_detail sd
     JOIN salary s ON sd.salary_id = s.id
     JOIN employee e ON s.employee_id = e.id
@@ -235,16 +196,8 @@ def get_annual_salary_summary_data(conn, year: int, item_ids: list):
     return pd.read_sql_query(query, conn, params=params)
 
 def get_cumulative_bonus_for_year(conn, employee_id: int, year: int, bonus_item_names: list):
-    """
-    查詢指定員工在特定年度中，所有獎金類項目的累計總額。
-    同時也會查詢已扣繳的二代健保補充費總額。
-    """
-    if not bonus_item_names:
-        return 0, 0
-
+    if not bonus_item_names: return 0, 0
     placeholders = ','.join('?' for _ in bonus_item_names)
-    
-    # 查詢累計獎金
     bonus_query = f"""
     SELECT SUM(sd.amount)
     FROM salary_detail sd
@@ -255,8 +208,6 @@ def get_cumulative_bonus_for_year(conn, employee_id: int, year: int, bonus_item_
     bonus_params = [employee_id, year] + bonus_item_names
     cursor = conn.cursor()
     cumulative_bonus = cursor.execute(bonus_query, bonus_params).fetchone()[0] or 0
-
-    # 查詢已扣補充費
     premium_query = """
     SELECT SUM(sd.amount)
     FROM salary_detail sd
@@ -266,60 +217,32 @@ def get_cumulative_bonus_for_year(conn, employee_id: int, year: int, bonus_item_
     """
     premium_params = (employee_id, year)
     deducted_premium = cursor.execute(premium_query, premium_params).fetchone()[0] or 0
-    
-    # 因為扣款是負數，所以要取絕對值
     return cumulative_bonus, abs(deducted_premium)
 
 def update_salary_preview_data(conn, year: int, month: int, df_to_update: pd.DataFrame):
-    """
-    接收從薪資基礎審核頁面編輯後的 DataFrame，並更新對應的薪資紀錄。
-    """
-    if df_to_update.empty:
-        return 0
-        
+    if df_to_update.empty: return 0
     cursor = conn.cursor()
-    
-    # 預先獲取 salary_id 和 salary_item_id 的映射
     salary_id_map = pd.read_sql("SELECT id, employee_id FROM salary WHERE year = ? AND month = ?", conn, params=(year, month)).set_index('employee_id')['id'].to_dict()
     item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
-    
-    # 獲取需要更新的薪資項目 ID
-    base_salary_id = item_map.get('底薪')
-    labor_fee_id = item_map.get('勞保費')
-    health_fee_id = item_map.get('健保費')
-
-    updates_for_details = [] # 用於 salary_detail 的更新
-    updates_for_pension = [] # 用於 salary 主表的更新
-    
+    base_salary_id, labor_fee_id, health_fee_id = item_map.get('底薪'), item_map.get('勞保費'), item_map.get('健保費')
+    updates_for_details, updates_for_pension = [], []
     for _, row in df_to_update.iterrows():
         emp_id = row['employee_id']
         salary_id = salary_id_map.get(emp_id)
-        if not salary_id:
-            continue
-        
-        # 準備 salary_detail 的更新資料
+        if not salary_id: continue
         if base_salary_id: updates_for_details.append((row['底薪'], salary_id, base_salary_id))
         if labor_fee_id: updates_for_details.append((row['勞保費'], salary_id, labor_fee_id))
         if health_fee_id: updates_for_details.append((row['健保費'], salary_id, health_fee_id))
-        
-        # 準備 salary 主表的更新資料
         updates_for_pension.append((row['勞退提撥'], salary_id))
-
     try:
-        # 使用 ON CONFLICT 語法一次性更新或插入 salary_detail
         detail_sql = """
         INSERT INTO salary_detail (amount, salary_id, salary_item_id) VALUES (?, ?, ?)
         ON CONFLICT(salary_id, salary_item_id) DO UPDATE SET amount = excluded.amount;
         """
         cursor.executemany(detail_sql, updates_for_details)
-        
-        # 逐筆更新 salary 主表的勞退提撥
         pension_sql = "UPDATE salary SET employer_pension_contribution = ? WHERE id = ?"
         cursor.executemany(pension_sql, updates_for_pension)
-        
         conn.commit()
-        return len(df_to_update) # 回傳成功更新的員工人數
-        
+        return len(df_to_update)
     except Exception as e:
-        conn.rollback()
-        raise e
+        conn.rollback(); raise e
