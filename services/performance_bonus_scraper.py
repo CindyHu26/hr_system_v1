@@ -31,7 +31,7 @@ def fetch_performance_count(username, password, start_date_str, end_date_str):
         "safeBrowse.enabled": True, "plugins.always_open_pdf_externally": True
     }
     options.add_experimental_option("prefs", prefs)
-    # options.add_argument('--headless')
+    options.add_argument('--headless')
 
     driver = None
     try:
