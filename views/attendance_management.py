@@ -46,9 +46,9 @@ def show_page(conn):
                         with st.form(f"edit_attendance_{record_id}"):
                             st.write(f"正在修改 **{record_data['name_ch']}** 於 **{record_data['date']}** 的紀錄")
                             try: current_checkin = datetime.strptime(record_data['checkin_time'], '%H:%M:%S').time()
-                            except (TypeError, ValueError): current_checkin = time(8, 30)
+                            except (TypeError, ValueError): current_checkin = time(8, 0)
                             try: current_checkout = datetime.strptime(record_data['checkout_time'], '%H:%M:%S').time()
-                            except (TypeError, ValueError): current_checkout = time(17, 30)
+                            except (TypeError, ValueError): current_checkout = time(17, 0)
                             c1_edit, c2_edit = st.columns(2)
                             new_checkin = c1_edit.time_input("新的簽到時間", value=current_checkin, step=60)
                             new_checkout = c2_edit.time_input("新的簽退時間", value=current_checkout, step=60)
@@ -61,7 +61,6 @@ def show_page(conn):
                 else:
                     st.info("目前沒有可供修改的紀錄。")
 
-            # ▼▼▼▼▼【程式碼新增處】▼▼▼▼▼
             st.markdown("---")
             st.subheader("個人出勤記錄編輯區 (Excel 批次修改)")
             
@@ -127,13 +126,11 @@ def show_page(conn):
                         else:
                             st.warning("請先上傳檔案。")
 
-            # ▲▲▲▲▲【程式碼新增處】▲▲▲▲▲
         except Exception as e:
             st.error(f"讀取或操作出勤紀錄時發生錯誤: {e}")
             st.code(traceback.format_exc())
 
     with tab2:
-        # ... (此頁籤內容維持不變) ...
         st.subheader("從打卡機檔案批次匯入")
         st.info("系統將使用「姓名」作為唯一匹配依據，並自動忽略姓名中的所有空格。請確保打卡檔姓名與員工資料庫中的姓名一致。")
         uploaded_file = st.file_uploader("上傳打卡機檔案 (通常為 .xls 格式)", type=['xls', 'xlsx'])
