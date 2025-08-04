@@ -73,16 +73,11 @@ def calculate_salary_df(conn, year, month):
 
         base_salary = base_info['base_salary']
         insurance_salary = base_info['insurance_salary'] or base_salary
-        
-        adjusted_base_salary = base_salary
-        if emp['title'] != '舍監' and len(unpaid_dates) > 0:
-            adjusted_base_salary -= round(base_salary / 30) * len(unpaid_dates)
-        
-        if base_salary == MINIMUM_WAGE_OF_YEAR and adjusted_base_salary < MINIMUM_WAGE_OF_YEAR:
-            adjusted_base_salary = MINIMUM_WAGE_OF_YEAR
-        
-        details['底薪'] = int(round(adjusted_base_salary))
-        hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
+
+        if emp['title'] == '協理':
+            details['底薪'] = int(round(base_salary))
+            all_salary_data.append(details)
+            continue # 直接跳到下一個員工，不執行後續計算
         
         if emp['dept'] in ['服務', '行政']:
             entry_date_str = emp['entry_date']
@@ -197,7 +192,16 @@ def calculate_salary_df(conn, year, month):
                 if part_time_premium > 0:
                     details['二代健保(兼職)'] = -int(part_time_premium)
         
+        adjusted_base_salary = base_salary
+        if emp['title'] != '舍監' and len(unpaid_dates) > 0:
+            adjusted_base_salary -= round(base_salary / 30) * len(unpaid_dates)
         
+        if base_salary == MINIMUM_WAGE_OF_YEAR and adjusted_base_salary < MINIMUM_WAGE_OF_YEAR:
+            adjusted_base_salary = MINIMUM_WAGE_OF_YEAR
+        
+        details['底薪'] = int(round(adjusted_base_salary))
+        hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
+
         all_salary_data.append(details)
         
     return pd.DataFrame(all_salary_data).fillna(0), item_types
