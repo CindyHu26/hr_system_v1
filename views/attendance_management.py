@@ -187,22 +187,58 @@ def display_bulk_edit_interface(conn, emp_id_list, year, month, file_name_prefix
                     try:
                         edited_df = pd.read_excel(uploaded_file, dtype={'checkin_time': str, 'checkout_time': str})
                         
+                        # 讀取原始資料，用於比對和保留原始值
+                        original_df = pd.concat([
+                            q_att.get_attendance_by_employee_month(conn, emp_id, year, month) for emp_id in emp_id_list
+                        ], ignore_index=True)
+
                         edited_df.dropna(subset=['id'], inplace=True)
                         edited_df['id'] = edited_df['id'].astype(int)
 
+                        # 將編輯後的資料與原始資料合併，以便逐行比對
+                        merged_df = pd.merge(original_df, edited_df, on='id', suffixes=('_orig', '_new'))
+
                         updates_count = 0
-                        for _, row in edited_df.iterrows():
-                            try: new_checkin = datetime.strptime(row['checkin_time'], '%H:%M:%S').time() if pd.notna(row['checkin_time']) else time(0,0)
-                            except (TypeError, ValueError): new_checkin = time(0, 0)
-                                
-                            try: new_checkout = datetime.strptime(row['checkout_time'], '%H:%M:%S').time() if pd.notna(row['checkout_time']) else time(0,0)
-                            except (TypeError, ValueError): new_checkout = time(0, 0)
+                        for _, row in merged_df.iterrows():
                             
-                            new_minutes = logic_att.recalculate_attendance_minutes(new_checkin, new_checkout)
-                            q_att.update_attendance_record(conn, row['id'], new_checkin, new_checkout, new_minutes)
-                            updates_count += 1
-                        
-                        st.success(f"成功更新了 {updates_count} 筆紀錄！")
+                            # 預設使用原始資料庫中的時間
+                            final_checkin_str = row.get('checkin_time_orig')
+                            final_checkout_str = row.get('checkout_time_orig')
+
+                            # 檢查 Excel 中的簽到時間是否為有效值
+                            new_checkin_val = row.get('checkin_time_new')
+                            if pd.notna(new_checkin_val) and str(new_checkin_val).strip() not in ['-', '']:
+                                final_checkin_str = str(new_checkin_val)
+                            
+                            # 檢查 Excel 中的簽退時間是否為有效值
+                            new_checkout_val = row.get('checkout_time_new')
+                            if pd.notna(new_checkout_val) and str(new_checkout_val).strip() not in ['-', '']:
+                                final_checkout_str = str(new_checkout_val)
+
+                            # 只有在時間實際發生變更時才更新
+                            if final_checkin_str != row.get('checkin_time_orig') or final_checkout_str != row.get('checkout_time_orig'):
+                                
+                                # 將最終確認的時間字串轉換為 time 物件
+                                try:
+                                    final_checkin_time = datetime.strptime(final_checkin_str, '%H:%M:%S').time() if final_checkin_str else time(0, 0)
+                                except (TypeError, ValueError):
+                                    final_checkin_time = time(0, 0)
+
+                                try:
+                                    final_checkout_time = datetime.strptime(final_checkout_str, '%H:%M:%S').time() if final_checkout_str else time(0, 0)
+                                except (TypeError, ValueError):
+                                    final_checkout_time = time(0, 0)
+
+                                # 重新計算分鐘數並更新資料庫
+                                new_minutes = logic_att.recalculate_attendance_minutes(final_checkin_time, final_checkout_time)
+                                q_att.update_attendance_record(conn, row['id'], final_checkin_time, final_checkout_time, new_minutes)
+                                updates_count += 1
+
+
+                        if updates_count > 0:
+                            st.success(f"成功更新了 {updates_count} 筆紀錄！")
+                        else:
+                            st.info("沒有偵測到任何有效的時間變更。")
                         st.rerun()
 
                     except Exception as e:

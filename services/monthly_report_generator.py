@@ -95,7 +95,7 @@ def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
     df_merged = pd.merge(df, att_summary, on='employee_id', how='left').fillna(0)
     
     basic_earning_items = ['底薪', '加班費(延長工時)', '加班費(再延長工時)']
-    basic_deduction_items = ['勞健保', '借支', '事假', '病假', '遲到', '早退', '其他', '稅款']
+    basic_deduction_items = ['勞健保', '事假', '病假', '遲到', '早退']
     all_basic_items = basic_earning_items + basic_deduction_items
     for item in all_basic_items:
         if item not in df_merged.columns:
@@ -109,9 +109,8 @@ def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
         '員工姓名': '姓名', '員工編號': '編號', 'company_name': '加保單位', 'dept': '部門', '底薪': '底薪',
         '加班費(延長工時)': '加班費', '加班費(再延長工時)': '加班費2', 
         '應付總額': '應付總額',
-        '勞健保': '勞健保', '借支': '借支', '事假': '事假', '病假': '病假', 
+        '勞健保': '勞健保', '事假': '事假', '病假': '病假', 
         'late_minutes': '遲到(分)', '遲到': '遲到', 'early_leave_minutes': '早退(分)', '早退': '早退', 
-        '其他': '其他', '稅款': '稅款', 
         '應扣總額': '應扣總額',
         '實支金額': '實支金額',
         '勞退提撥': '勞退提撥' 
@@ -195,7 +194,7 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
     for i, emp_row in df_basic.iterrows():
         base_salary = int(emp_row.get('底薪', 0))
         earnings = [{'label': '底薪', 'key': '底薪', 'formula': None, 'unit_key': None}, {'label': '加班費(延長工時)', 'key': '加班費', 'formula': f"{base_salary}/30/8*1.34", 'unit_key': '延長工時', 'unit': 'H'}, {'label': '加班費(再延長工時)', 'key': '加班費2', 'formula': f"{base_salary}/30/8*1.67", 'unit_key': '再延長工時', 'unit': 'H'}]
-        deductions = [{'label': '勞健保', 'key': '勞健保', 'formula': None, 'unit_key': None}, {'label': '借支', 'key': '借支', 'formula': None, 'unit_key': None}, {'label': '事假', 'key': '事假', 'formula': f'{base_salary}/30', 'unit_key': '事假(時)', 'unit': 'H'}, {'label': '病假', 'key': '病假', 'formula': f'{base_salary}/30/2', 'unit_key': '病假(時)', 'unit': 'H'}, {'label': '遲到', 'key': '遲到', 'formula': f'{base_salary}/30/8/60', 'unit_key': '遲到(分)', 'unit': 'M'}, {'label': '早退', 'key': '早退', 'formula': f'{base_salary}/30/8/60', 'unit_key': '早退(分)', 'unit': 'M'}, {'label': '稅款', 'key': '稅款', 'formula': None, 'unit_key': None}, {'label': '其他', 'key': '其他', 'formula': None, 'unit_key': None}]
+        deductions = [{'label': '勞健保', 'key': '勞健保', 'formula': None, 'unit_key': None}, {'label': '事假', 'key': '事假', 'formula': f'{base_salary}/30', 'unit_key': '事假(時)', 'unit': 'H'}, {'label': '病假', 'key': '病假', 'formula': f'{base_salary}/30/2', 'unit_key': '病假(時)', 'unit': 'H'}, {'label': '遲到', 'key': '遲到', 'formula': f'{base_salary}/30/8/60', 'unit_key': '遲到(分)', 'unit': 'M'}, {'label': '早退', 'key': '早退', 'formula': f'{base_salary}/30/8/60', 'unit_key': '早退(分)', 'unit': 'M'}]
 
         num_item_rows = 8
         
