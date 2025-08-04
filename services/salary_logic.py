@@ -85,6 +85,8 @@ def calculate_salary_df(conn, year, month):
         details['底薪'] = int(round(base_salary))
         hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
 
+        # --- 【核心修正】調整計算順序 ---
+
         # 1. 優先設定常態薪資項目 (直接賦值)
         for item in q_allow.get_employee_recurring_items(conn, emp_id, year, month):
             details[item['name']] = -abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount'])
@@ -255,3 +257,41 @@ def calculate_salary_df(conn, year, month):
         return final_df[final_cols], item_types
 
     return pd.DataFrame(), item_types
+
+
+def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
+    report = {"success": 0, "skipped_emp": [], "skipped_item": [], "no_salary_record": []}
+    try:
+        df = pd.read_excel(uploaded_file)
+        if '員工姓名' not in df.columns: raise ValueError("Excel 檔案中缺少 '員工姓名' 欄位。")
+        emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
+        item_map_df = pd.read_sql("SELECT id, name, type FROM salary_item", conn)
+        item_map = {row['name']: {'id': row['id'], 'type': row['type']} for _, row in item_map_df.iterrows()}
+        salary_main_df = pd.read_sql("SELECT id, employee_id FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
+        salary_id_map = salary_main_df.set_index('employee_id')['id'].to_dict()
+        data_to_upsert = []
+        for _, row in df.iterrows():
+            emp_name = row.get('員工姓名')
+            if pd.isna(emp_name): continue
+            emp_id = emp_map.get(emp_name)
+            if not emp_id:
+                report["skipped_emp"].append(emp_name)
+                continue
+            salary_id = salary_id_map.get(emp_id)
+            if not salary_id:
+                report["no_salary_record"].append(emp_name)
+                continue
+            for item_name, amount in row.items():
+                if item_name == '員工姓名' or pd.isna(amount): continue
+                item_info = item_map.get(item_name)
+                if not item_info:
+                    report["skipped_item"].append(item_name)
+                    continue
+                final_amount = -abs(float(amount)) if item_info['type'] == 'deduction' else abs(float(amount))
+                data_to_upsert.append((salary_id, item_info['id'], int(final_amount)))
+        if data_to_upsert: report["success"] = q_write.batch_upsert_salary_details(conn, data_to_upsert)
+        report["skipped_emp"] = list(set(report["skipped_emp"]))
+        report["skipped_item"] = list(set(report["skipped_item"]))
+        return report
+    except Exception as e:
+        raise e

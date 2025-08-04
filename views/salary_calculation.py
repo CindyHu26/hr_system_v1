@@ -88,7 +88,6 @@ def show_page(conn):
             draft_to_save = edited_df[edited_df['status'] == 'draft']
             if not draft_to_save.empty:
                 with st.spinner("正在儲存草稿..."):
-                    # 這裡的 save_salary_draft 已經包含了總額重算，所以是安全的
                     q_write.save_salary_draft(conn, year, month, draft_to_save)
                     report_df, item_types = q_read.get_salary_report_for_editing(conn, year, month)
                     st.session_state[session_key] = {'df': report_df, 'types': item_types}
