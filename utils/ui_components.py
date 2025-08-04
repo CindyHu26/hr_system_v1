@@ -44,7 +44,7 @@ def employee_selector(conn, key_prefix="", pre_selected_ids=None):
         st.error(f"載入員工選擇器時發生錯誤: {e}")
         return []
 
-# --- 【升級版通用元件】 ---
+# --- 【通用元件】 ---
 def create_batch_import_section(info_text: str, template_columns: dict, template_file_name: str, import_logic_func, conn):
     """
     產生一個標準的批次匯入 UI 區塊 (V3)。
@@ -64,7 +64,7 @@ def create_batch_import_section(info_text: str, template_columns: dict, template
 
         if report.get('errors'):
             st.error("部分資料處理失敗，原因如下：")
-            # [核心修改] 將錯誤訊息放在一個固定高度且可滾動的容器中
+            # 將錯誤訊息放在一個固定高度且可滾動的容器中
             with st.container(height=300):
                 for error in report['errors']:
                     st.write(f"- 第 {error['row']} 行: {error['reason']}")

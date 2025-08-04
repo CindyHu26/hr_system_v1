@@ -47,9 +47,9 @@ PAGES_ADMIN = {
     "📄 員工加保管理": insurance_history,
 }
 PAGES_ATTENDANCE = {
-    "🌀 特殊日期管理": special_days_management,
     "📅 出勤紀錄管理": attendance_management,
     "📝 特別出勤管理": special_attendance,
+    "🌀 特殊日期管理": special_days_management,
     "🌴 請假與異常分析": leave_analysis,
     "📖 請假紀錄總覽": leave_history,
     "🏖️ 年度特休計算": annual_leave,
