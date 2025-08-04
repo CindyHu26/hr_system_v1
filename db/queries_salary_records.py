@@ -219,6 +219,42 @@ def get_annual_salary_summary_data(conn, year: int, item_ids: list):
     params = [year] + item_ids
     return pd.read_sql_query(query, conn, params=params)
 
+def get_cumulative_bonus_for_period(conn, employee_id: int, year: int, start_month: int, end_month: int, bonus_item_names: list):
+    """
+    (新版)
+    計算指定員工在特定期間內 (某年 start_month 到 end_month) 已領取的累計獎金總額，
+    以及已被扣除的「高額獎金」補充保費總額。
+    """
+    if not bonus_item_names:
+        return 0, 0
+        
+    placeholders = ','.join('?' for _ in bonus_item_names)
+    
+    # 查詢指定期間內的累計獎金總額
+    bonus_query = f"""
+    SELECT SUM(sd.amount)
+    FROM salary_detail sd
+    JOIN salary s ON sd.salary_id = s.id
+    JOIN salary_item si ON sd.salary_item_id = si.id
+    WHERE s.employee_id = ? AND s.year = ? AND s.month BETWEEN ? AND ? AND si.name IN ({placeholders});
+    """
+    bonus_params = [employee_id, year, start_month, end_month] + bonus_item_names
+    cursor = conn.cursor()
+    cumulative_bonus = cursor.execute(bonus_query, bonus_params).fetchone()[0] or 0
+    
+    # 查詢同一期間內，已扣除的高額獎金補充保費 (用於避免重複扣款)
+    premium_query = """
+    SELECT SUM(sd.amount)
+    FROM salary_detail sd
+    JOIN salary s ON sd.salary_id = s.id
+    JOIN salary_item si ON sd.salary_item_id = si.id
+    WHERE s.employee_id = ? AND s.year = ? AND s.month BETWEEN ? AND ? AND si.name = '二代健保(高額獎金)';
+    """
+    premium_params = (employee_id, year, start_month, end_month)
+    deducted_premium = cursor.execute(premium_query, premium_params).fetchone()[0] or 0
+    
+    return cumulative_bonus, abs(deducted_premium)
+
 def get_cumulative_bonus_for_year(conn, employee_id: int, year: int, bonus_item_names: list):
     if not bonus_item_names: return 0, 0
     placeholders = ','.join('?' for _ in bonus_item_names)

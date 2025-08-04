@@ -40,7 +40,7 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V27: 修正二代健保兼職與高額獎金的計算邏輯互斥問題
+    薪資試算引擎 V28: 二代健保高額獎金改為分段結算
     """
     db_configs = q_config.get_all_configs(conn)
     MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
@@ -142,43 +142,64 @@ def calculate_salary_df(conn, year, month):
         
         special_ot_pay = overtime_logic.calculate_special_overtime_pay(conn, emp_id, year, month, hourly_rate)
         if special_ot_pay > 0: details['津貼加班'] = special_ot_pay
-        bonus_result = q_bonus.get_employee_bonus(conn, emp_id, year, month)
-        if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
-        perf_bonus_result = q_perf.get_performance_bonus(conn, emp_id, year, month)
-        if perf_bonus_result: details['績效獎金'] = int(round(perf_bonus_result))
+        
         loan_amount = q_loan.get_employee_loan(conn, emp_id, year, month)
         if loan_amount > 0:
             details['借支'] = -int(loan_amount)
-
-        # 二代健保補充保費計算 (邏輯分流)
-        earning_cols_for_bonus = [col for col, type in item_types.items() if type == 'earning']
+        
+        bonus_result = q_bonus.get_employee_bonus(conn, emp_id, year, month)
+        if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
+        
+        perf_bonus_result = q_perf.get_performance_bonus(conn, emp_id, year, month)
+        if perf_bonus_result: details['績效獎金'] = int(round(perf_bonus_result))
         
         if is_insured_in_company:
-            # 情況一：公司有加保 (計算高額獎金補充保費)
-            current_month_bonus = sum(details.get(item, 0) for item in NHI_BONUS_ITEMS if item in details)
-            if current_month_bonus > 0:
-                cumulative_bonus, already_deducted = q_records.get_cumulative_bonus_for_year(conn, emp_id, year, NHI_BONUS_ITEMS)
-                total_cumulative_bonus = cumulative_bonus + current_month_bonus
-                deduction_threshold = insurance_salary * NHI_BONUS_MULTIPLIER
-                if total_cumulative_bonus > deduction_threshold:
-                    taxable_bonus = total_cumulative_bonus - deduction_threshold
-                    total_premium_due = round(taxable_bonus * NHI_SUPPLEMENT_RATE)
-                    this_month_premium = total_premium_due - already_deducted
-                    if this_month_premium > 0:
-                        details['二代健保(高額獎金)'] = -int(this_month_premium)
+            # 情況一：公司有加保 (計算高額獎金補充保費 - 僅在特定月份結算)
+            period_to_check = None
+            # 端午節獎金結算 (於 6 月份薪資單)
+            if month == 6:
+                period_to_check = {"start": 1, "end": 5, "year": year}
+            # 中秋節獎金結算 (於 11 月份薪資單)
+            elif month == 11:
+                period_to_check = {"start": 6, "end": 10, "year": year}
+            # 年終獎金結算 (於隔年 1 月份薪資單)
+            elif month == 1:
+                period_to_check = {"start": 11, "end": 12, "year": year - 1}
+
+            if period_to_check:
+                p_year = period_to_check["year"]
+                p_start = period_to_check["start"]
+                p_end = period_to_check["end"]
+                
+                # 獲取該期間的累計獎金與已付補充保費
+                period_bonus, already_deducted = q_records.get_cumulative_bonus_for_period(
+                    conn, emp_id, p_year, p_start, p_end, NHI_BONUS_ITEMS
+                )
+
+                if period_bonus > 0:
+                    # 結算時，以當前月份的投保薪資為基準
+                    deduction_threshold = insurance_salary * NHI_BONUS_MULTIPLIER
+                    if period_bonus > deduction_threshold:
+                        taxable_bonus = period_bonus - deduction_threshold
+                        total_premium_due = round(taxable_bonus * NHI_SUPPLEMENT_RATE)
+                        
+                        this_month_premium = total_premium_due - already_deducted
+                        
+                        if this_month_premium > 0:
+                            details['二代健保(高額獎金)'] = -int(this_month_premium)
         else:
-            # 情況二：公司無加保 (計算兼職所得補充保費)
-            earning_cols = [col for col, type in item_types.items() if type == 'earning']
+            # 情況二：公司無加保 (計算兼職所得補充保費 - 維持每月計算)
+            earning_cols = [col for col, item_type in item_types.items() if item_type == 'earning']
             total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols)
 
-            # 只有當月總給付額 > 基本工資時才計算
             if total_earnings_for_part_time > MINIMUM_WAGE_OF_YEAR:
-                # 使用 math.ceil 執行無條件進位
                 part_time_premium = math.ceil(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
                 if part_time_premium > 0:
                     details['二代健保(兼職)'] = -int(part_time_premium)
         
+        
         all_salary_data.append(details)
+        
     return pd.DataFrame(all_salary_data).fillna(0), item_types
 
 def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
