@@ -4,10 +4,31 @@
 """
 import pandas as pd
 
-def get_employee_recurring_items(conn, emp_id):
-    """查詢單一員工的所有常態薪資設定。"""
-    sql = "SELECT si.name, esi.amount, si.type FROM employee_salary_item esi JOIN salary_item si ON esi.salary_item_id = si.id WHERE esi.employee_id = ?"
-    return conn.execute(sql, (emp_id,)).fetchall()
+def get_employee_recurring_items(conn, emp_id, year, month):
+    """
+    查詢單一員工在指定月份有效的常態薪資設定。
+    【修正版】: 使用 ROW_NUMBER() 確保每個薪資項目只取回最新的一筆有效紀錄。
+    """
+    from utils.helpers import get_monthly_dates
+    month_start, month_end = get_monthly_dates(year, month)
+    sql = """
+    WITH RankedItems AS (
+        SELECT
+            si.name,
+            esi.amount,
+            si.type,
+            ROW_NUMBER() OVER(PARTITION BY esi.salary_item_id ORDER BY esi.start_date DESC) as rn
+        FROM employee_salary_item esi
+        JOIN salary_item si ON esi.salary_item_id = si.id
+        WHERE esi.employee_id = ?
+          AND date(esi.start_date) <= date(?)
+          AND (esi.end_date IS NULL OR esi.end_date = '' OR date(esi.end_date) >= date(?))
+    )
+    SELECT name, amount, type
+    FROM RankedItems
+    WHERE rn = 1;
+    """
+    return conn.execute(sql, (emp_id, month_end, month_start)).fetchall()
 
 def get_all_employee_salary_items(conn):
     """查詢所有員工的所有常態薪資設定，用於總覽頁面。"""

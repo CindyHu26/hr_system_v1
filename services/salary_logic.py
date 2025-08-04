@@ -40,8 +40,9 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V31:
-    - 【核心修正】修正 bank_transfer_amount 的計算邏輯，避免 'int' object has no attribute 'iloc' 錯誤。
+    薪資試算引擎 V32:
+    - 呼叫 q_allow.get_employee_recurring_items 時傳入 year 和 month，
+      以確保只抓取最新的有效常態薪資項目。
     """
     db_configs = q_config.get_all_configs(conn)
     MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
@@ -109,7 +110,8 @@ def calculate_salary_df(conn, year, month):
                 if leave_type == '事假': details['事假'] = -int(round(hours * hourly_rate))
                 elif leave_type == '病假': details['病假'] = -int(round(hours * hourly_rate * 0.5))
 
-        for item in q_allow.get_employee_recurring_items(conn, emp_id):
+        # 【核心修正】呼叫函式時傳入 year 和 month
+        for item in q_allow.get_employee_recurring_items(conn, emp_id, year, month):
             details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
 
         is_insured_in_company = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)

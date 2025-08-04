@@ -18,7 +18,7 @@ def show_page(conn):
 
     # --- TAB 1: 總覽與單筆維護 (整合版) ---
     with tab1:
-        st.subheader("常態薪資項總覽 (可直接修改)")
+        st.subheader("常態薪資項總覽 (可直接修改金額)")
         try:
             # 1. 獲取原始的長表資料
             long_df = q_allow.get_all_employee_salary_items(conn)
@@ -122,14 +122,16 @@ def show_page(conn):
         # --- 刪除區塊 ---
         with st.expander("🗑️ 刪除現有設定"):
             if not long_df.empty:
+                # 建立更詳細的選項文字，方便使用者辨識
                 record_options = {
-                    f"ID:{row['id']} - {row['員工姓名']} / {row['項目名稱']}": row['id']
+                    f"ID:{row['id']} - {row['員工姓名']} / {row['項目名稱']} / 金額:{row['金額']} (生效:{row['生效日']})": row['id']
                     for _, row in long_df.iterrows()
                 }
                 selected_key = st.selectbox(
                     "選擇一筆設定進行刪除", 
                     options=record_options.keys(), 
-                    index=None
+                    index=None,
+                    placeholder="點此選擇要刪除的舊紀錄或錯誤紀錄..."
                 )
                 if st.button("🔴 確認刪除所選紀錄", type="primary"):
                     if selected_key:
@@ -159,9 +161,10 @@ def show_page(conn):
                         st.markdown("##### 1. 選擇項目與金額")
                         selected_item_name = st.selectbox("薪資項目*", options=item_options.keys())
                         amount = st.number_input("設定金額*", min_value=0, step=100)
-                        start_date = st.date_input("生效日*", value=datetime.now())
-                        end_date = st.date_input("結束日 (留空表示持續有效)", value=None)
-                        note = st.text_input("備註 (可選填)")
+                        # 【核心修正】在這裡加入日期選擇
+                        start_date_batch = st.date_input("生效日*", value=datetime.now())
+                        end_date_batch = st.date_input("結束日 (留空表示持續有效)", value=None)
+                        note_batch = st.text_input("備註 (可選填)")
                     with col_emp:
                         st.markdown("##### 2. 選擇要套用的員工")
                         selected_employee_ids = employee_selector(conn, key_prefix="allowance_add")
@@ -171,12 +174,13 @@ def show_page(conn):
                             st.error("請務必選擇「薪資項目」和至少一位「員工」！")
                         else:
                             item_id = item_options[selected_item_name]
-                            start_date_str = start_date.strftime('%Y-%m-%d')
-                            end_date_str = end_date.strftime('%Y-%m-%d') if end_date else None
+                            # 【核心修正】使用新的日期變數
+                            start_date_str = start_date_batch.strftime('%Y-%m-%d')
+                            end_date_str = end_date_batch.strftime('%Y-%m-%d') if end_date_batch else None
                             with st.spinner("正在為選定員工儲存設定..."):
                                 count = q_allow.batch_add_or_update_employee_salary_items(
                                     conn, selected_employee_ids, item_id, amount, 
-                                    start_date_str, end_date_str, note
+                                    start_date_str, end_date_str, note_batch
                                 )
                             st.success(f"成功為 {count} 位員工新增/更新了「{selected_item_name}」的設定！")
                             if 'original_allowance_df' in st.session_state:
