@@ -112,10 +112,10 @@ def recalculate_attendance_minutes(checkin: time, checkout: time) -> dict:
     """
     根據新的簽到簽退時間，重新計算遲到、早退、加班分鐘數。
     """
-    work_start, lunch_start = time(8, 30), time(12, 0)
-    lunch_end, work_end = time(13, 30), time(17, 30)
+    work_start, lunch_start = time(8, 0), time(12, 0)
+    lunch_end, work_end = time(13, 0), time(17, 0)
     overtime_start_1, overtime_end_1 = time(17, 30), time(19, 30)
-    overtime_start_2, overtime_end_2 = time(19, 30), time(21, 30)
+    overtime_start_2, overtime_end_2 = time(19, 30), time(23, 59)
 
     # 將 time 物件轉換為 timedelta 以便計算
     def to_timedelta(t):
