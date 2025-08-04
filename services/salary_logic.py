@@ -218,7 +218,27 @@ def calculate_salary_df(conn, year, month):
         
         all_salary_data.append(details)
         
-    return pd.DataFrame(all_salary_data).fillna(0), item_types
+    final_df = pd.DataFrame(all_salary_data).fillna(0)
+    if not final_df.empty:
+        final_df['status'] = 'draft'
+
+        # 確保與 get_salary_report_for_editing 的欄位順序和類型一致
+        report_template, _ = q_read.get_salary_report_for_editing(conn, 2000, 1) # 借用一個模板
+        final_cols = report_template.columns.tolist()
+
+        for col in final_cols:
+            if col not in final_df.columns:
+                final_df[col] = 0 if col not in ['status', '備註', '員工姓名', '員工編號'] else ''
+        
+        # 轉換資料類型以匹配
+        for col in final_df.columns:
+            if col in report_template.columns and report_template[col].dtype != final_df[col].dtype:
+                if pd.api.types.is_numeric_dtype(report_template[col]):
+                    final_df[col] = pd.to_numeric(final_df[col], errors='coerce').fillna(0)
+        
+        return final_df[final_cols], item_types
+
+    return pd.DataFrame(), item_types
 
 
 def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):

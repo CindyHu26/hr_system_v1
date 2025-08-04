@@ -116,3 +116,23 @@ def batch_upsert_allowances(conn, df: pd.DataFrame):
     
     report['failed'] = len(df) - len(data_to_upsert)
     return report
+
+def get_monthly_adjustments(conn, year: int, month: int):
+    """查詢特定月份的單次薪資調整紀錄。"""
+    from utils.helpers import get_monthly_dates
+    start_date, end_date = get_monthly_dates(year, month)
+    
+    query = """
+    SELECT 
+        esi.id, 
+        e.name_ch as '員工姓名', 
+        si.name as '項目名稱', 
+        esi.amount as '金額',
+        esi.note as '備註'
+    FROM employee_salary_item esi
+    JOIN employee e ON esi.employee_id = e.id 
+    JOIN salary_item si ON esi.salary_item_id = si.id 
+    WHERE esi.start_date = ? AND esi.end_date = ?
+    ORDER BY e.hr_code
+    """
+    return pd.read_sql_query(query, conn, params=(start_date, end_date))
