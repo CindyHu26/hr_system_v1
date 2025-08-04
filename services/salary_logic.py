@@ -221,7 +221,7 @@ def calculate_salary_df(conn, year, month):
     final_df = pd.DataFrame(all_salary_data).fillna(0)
     if not final_df.empty:
         final_df['status'] = 'draft'
-
+        final_df['勞健保'] = pd.to_numeric(final_df.get('勞保費', 0), errors='coerce').fillna(0) + pd.to_numeric(final_df.get('健保費', 0), errors='coerce').fillna(0)
         # 確保與 get_salary_report_for_editing 的欄位順序和類型一致
         report_template, _ = q_read.get_salary_report_for_editing(conn, 2000, 1) # 借用一個模板
         final_cols = report_template.columns.tolist()
