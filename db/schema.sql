@@ -107,10 +107,13 @@ CREATE TABLE IF NOT EXISTS salary (
 
 -- 薪資明細表
 CREATE TABLE IF NOT EXISTS salary_detail (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, salary_id INTEGER NOT NULL, salary_item_id INTEGER NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    salary_id INTEGER NOT NULL,
+    salary_item_id INTEGER NOT NULL,
     amount REAL NOT NULL,
     FOREIGN KEY(salary_id) REFERENCES salary(id) ON DELETE CASCADE,
-    FOREIGN KEY(salary_item_id) REFERENCES salary_item(id)
+    FOREIGN KEY(salary_item_id) REFERENCES salary_item(id),
+    UNIQUE(salary_id, salary_item_id)
 );
 
 -- 勞健保級距表

@@ -1,4 +1,4 @@
-# pages/salary_calculation.py
+# views/salary_calculation.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -8,6 +8,7 @@ from dateutil.relativedelta import relativedelta
 from services import salary_logic as logic_salary
 from db import queries_salary_records as q_records
 from db import queries_employee as q_emp
+from db import queries_salary_items as q_items
 
 def show_page(conn):
     st.header("💵 薪資單產生與管理")
@@ -20,16 +21,11 @@ def show_page(conn):
 
     st.write("---")
 
-    # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
-    # 在渲染按鈕前，先檢查是否存在已定版的紀錄
     final_records_exist = q_records.check_if_final_records_exist(conn, year, month)
-    # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
     action_c1, action_c2 = st.columns(2)
 
     with action_c1:
-        # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
-        # 根據檢查結果，動態設定按鈕的 disabled 狀態
         if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會根據最新的出勤、假單等資料重新計算，並覆蓋現有草稿。", disabled=final_records_exist):
             with st.spinner("正在根據最新資料計算全新草稿..."):
                 try:
@@ -75,14 +71,76 @@ def show_page(conn):
         use_container_width=True,
         key="salary_editor"
     )
-    
+
+    with st.expander("✏️ 單筆手動調整 (會直接影響草稿)"):
+        all_employees = q_emp.get_all_employees(conn)
+        all_items_df = q_items.get_all_salary_items(conn, active_only=True)
+        
+        draft_emp_names = edited_df[edited_df['status'] == 'draft']['員工姓名'].unique()
+        employees_in_draft = all_employees[all_employees['name_ch'].isin(draft_emp_names)]
+
+        if not employees_in_draft.empty:
+            emp_options = dict(zip(employees_in_draft['name_ch'], employees_in_draft['id']))
+            item_options = dict(zip(all_items_df['name'], all_items_df['id']))
+            item_types = dict(zip(all_items_df['name'], all_items_df['type']))
+
+            with st.form("single_item_adjustment_form"):
+                st.write("此操作會直接更新資料庫中的草稿數字，完成後上方的總覽表格將會自動刷新。")
+                c1, c2, c3 = st.columns(3)
+                
+                selected_emp_name = c1.selectbox("選擇員工*", options=emp_options.keys())
+                selected_item_name = c2.selectbox("選擇薪資項目*", options=item_options.keys())
+                amount = c3.number_input("輸入金額*", step=1.0)
+                
+                submitted = st.form_submit_button("確認調整")
+
+                if submitted:
+                    if selected_emp_name and selected_item_name:
+                        with st.spinner("正在儲存調整並刷新資料..."):
+                            try:
+                                emp_id = emp_options[selected_emp_name]
+                                item_id = item_options[selected_item_name]
+                                item_type = item_types[selected_item_name]
+                                
+                                final_amount = -abs(amount) if item_type == 'deduction' else abs(amount)
+                                if amount == 0:
+                                    final_amount = 0
+
+                                salary_main_df = pd.read_sql("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", conn, params=(emp_id, year, month))
+                                
+                                if salary_main_df.empty:
+                                    st.error(f"錯誤：找不到 {selected_emp_name} 的 {year}年{month}月 薪資主紀錄。")
+                                else:
+                                    salary_id = salary_main_df['id'].iloc[0]
+                                    data_to_upsert = [(salary_id, item_id, int(final_amount))]
+                                    q_records.batch_upsert_salary_details(conn, data_to_upsert)
+                                    
+                                    # 儲存成功後，立刻重新從資料庫載入最新的薪資單資料
+                                    report_df, item_types_refreshed = q_records.get_salary_report_for_editing(conn, year, month)
+                                    st.session_state.salary_report_df = report_df
+                                    st.session_state.salary_item_types = item_types_refreshed
+                                    
+                                    st.success(f"成功調整！總覽表格已刷新。")
+                                    # 短暫延遲讓使用者看到成功訊息
+                                    import time
+                                    time.sleep(1)
+                                    # 使用 st.rerun() 來重新渲染整個頁面，確保 data_editor 也能顯示新資料
+                                    st.rerun()
+
+                            except Exception as e:
+                                st.error(f"調整時發生錯誤: {e}")
+                    else:
+                        st.warning("請務必選擇員工和薪資項目。")
+        else:
+            st.info("目前沒有狀態為「草稿」的紀錄可供單筆調整。")
+
     st.write("---")
     
     btn_c1, btn_c2 = st.columns(2)
 
     with btn_c1:
         draft_to_save = edited_df[edited_df['status'] == 'draft']
-        if st.button("💾 儲存草稿變更", disabled=draft_to_save.empty):
+        if st.button("💾 儲存 data_editor 的變更", disabled=draft_to_save.empty):
             with st.spinner("正在儲存草稿..."):
                 q_records.save_salary_draft(conn, year, month, draft_to_save)
                 st.success("草稿已成功儲存！")

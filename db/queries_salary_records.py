@@ -186,11 +186,15 @@ def revert_salary_to_draft(conn, year, month, employee_ids: list):
     return cursor.rowcount
 
 def batch_upsert_salary_details(conn, data_to_upsert: list):
+    """
+    通用函式：批次新增或更新薪資明細。
+    現在會依賴 schema.sql 中定義的 UNIQUE 約束。
+    """
     if not data_to_upsert: return 0
     cursor = conn.cursor()
     try:
         cursor.execute("BEGIN TRANSACTION")
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_salary_item ON salary_detail (salary_id, salary_item_id);")
+        # cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_salary_item ON salary_detail (salary_id, salary_item_id);")       
         sql = """
             INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)
             ON CONFLICT(salary_id, salary_item_id) DO UPDATE SET amount = excluded.amount;
@@ -200,7 +204,6 @@ def batch_upsert_salary_details(conn, data_to_upsert: list):
         return cursor.rowcount
     except Exception as e:
         conn.rollback(); raise e
-
 def get_annual_salary_summary_data(conn, year: int, item_ids: list):
     if not item_ids: return pd.DataFrame()
     placeholders = ','.join('?' for _ in item_ids)
