@@ -35,14 +35,15 @@ def show_page(conn):
         if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會先清除本月所有現有草稿，再根據最新資料重新計算。", disabled=final_records_exist):
             with st.spinner("正在清除舊草稿並計算全新草稿..."):
                 try:
-                    # 【核心修正】在計算前，先呼叫新的函式來刪除舊草稿
-                    deleted_count = q_write.delete_salary_drafts(conn, year, month)
-                    st.toast(f"已清除 {deleted_count} 筆舊草稿紀錄。")
-
+                    q_write.delete_salary_drafts(conn, year, month)
                     new_draft_df, item_types = logic_salary.calculate_salary_df(conn, year, month)
+                    
                     if not new_draft_df.empty:
                         q_write.save_salary_draft(conn, year, month, new_draft_df)
-                        st.session_state[session_key] = {'df': new_draft_df, 'types': item_types}
+                        
+                        report_df, item_types = q_read.get_salary_report_for_editing(conn, year, month)
+                        st.session_state[session_key] = {'df': report_df, 'types': item_types}
+                        
                         st.success("新草稿已計算並儲存！表格已更新。")
                         time.sleep(0.5)
                         st.rerun()
@@ -71,7 +72,6 @@ def show_page(conn):
         return
 
     st.write("---")
-
     st.markdown("##### 薪資單編輯區")
     st.caption("您可以直接在表格中修改 `draft` 狀態的紀錄。`final` 狀態的紀錄已鎖定。")
 
@@ -96,7 +96,6 @@ def show_page(conn):
                     st.rerun()
             else:
                 st.info("沒有狀態為『草稿』的紀錄可供儲存。")
-
 
     with btn_c2:
         draft_to_finalize = edited_df[edited_df['status'] == 'draft']
@@ -133,13 +132,16 @@ def show_page(conn):
                             try:
                                 emp_id = emp_options[selected_emp_name]
                                 item_id = item_options[selected_item_name]
+                                item_type = item_types_map[selected_item_name]
+                                final_amount = -abs(amount) if item_type == 'deduction' else abs(amount)
+
                                 salary_id_result = conn.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ? AND status = 'draft'", (emp_id, year, month)).fetchone()
 
                                 if not salary_id_result:
                                     st.error(f"錯誤：找不到 {selected_emp_name} 的薪資草稿紀錄。")
                                 else:
                                     salary_id = salary_id_result[0]
-                                    q_write.batch_upsert_salary_details(conn, [(salary_id, item_id, int(amount))])
+                                    q_write.batch_upsert_salary_details(conn, [(salary_id, item_id, int(final_amount))])
                                     
                                     report_df, item_types = q_read.get_salary_report_for_editing(conn, year, month)
                                     st.session_state[session_key] = {'df': report_df, 'types': item_types}

@@ -6,23 +6,32 @@ import pandas as pd
 
 def get_employee_recurring_items(conn, emp_id, year, month):
     """
-    查詢單一員工在指定月份有效的常態薪資設定。
-    【V2 修正版】: 使用 strftime 強化日期比較與排序的穩定性，確保永遠抓取到最新紀錄。
+    【V2 修正版】查詢單一員工在指定月份有效的常態薪資設定。
+    - 使用 strftime 強化日期比較與排序的穩定性，確保永遠抓取到最新紀錄。
     """
     from utils.helpers import get_monthly_dates
     month_start, month_end = get_monthly_dates(year, month)
+    
     sql = """
     WITH RankedItems AS (
         SELECT
             si.name,
             esi.amount,
             si.type,
-            ROW_NUMBER() OVER(PARTITION BY esi.salary_item_id ORDER BY strftime('%Y-%m-%d', esi.start_date) DESC) as rn
+            ROW_NUMBER() OVER(
+                PARTITION BY esi.salary_item_id 
+                ORDER BY strftime('%Y-%m-%d', esi.start_date) DESC
+            ) as rn
         FROM employee_salary_item esi
         JOIN salary_item si ON esi.salary_item_id = si.id
-        WHERE esi.employee_id = ?
-          AND strftime('%Y-%m-%d', esi.start_date) <= strftime('%Y-%m-%d', ?)
-          AND (esi.end_date IS NULL OR esi.end_date = '' OR strftime('%Y-%m-%d', esi.end_date) >= strftime('%Y-%m-%d', ?))
+        WHERE 
+            esi.employee_id = ?
+            AND strftime('%Y-%m-%d', esi.start_date) <= strftime('%Y-%m-%d', ?)
+            AND (
+                esi.end_date IS NULL OR 
+                esi.end_date = '' OR 
+                strftime('%Y-%m-%d', esi.end_date) >= strftime('%Y-%m-%d', ?)
+            )
     )
     SELECT name, amount, type
     FROM RankedItems
@@ -78,15 +87,19 @@ def batch_add_or_update_employee_salary_items(conn, employee_ids, salary_item_id
     try:
         cursor.execute("BEGIN TRANSACTION")
         
-        placeholders = ','.join('?' for _ in employee_ids)
-        # 修正：刪除時應該只考慮 employee_id 和 salary_item_id，而不是所有日期
-        cursor.execute(f"DELETE FROM employee_salary_item WHERE salary_item_id = ? AND employee_id IN ({placeholders})", [salary_item_id] + employee_ids)
-        
-        data_tuples = [(emp_id, salary_item_id, amount, start_date, end_date, note) for emp_id in employee_ids]
-        cursor.executemany("INSERT INTO employee_salary_item (employee_id, salary_item_id, amount, start_date, end_date, note) VALUES (?, ?, ?, ?, ?, ?)", data_tuples)
-        
+        # 尋找現有紀錄並更新或插入
+        for emp_id in employee_ids:
+            cursor.execute("""
+                INSERT INTO employee_salary_item (employee_id, salary_item_id, amount, start_date, end_date, note)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(employee_id, salary_item_id, start_date) DO UPDATE SET
+                    amount = excluded.amount,
+                    end_date = excluded.end_date,
+                    note = excluded.note;
+            """, (emp_id, salary_item_id, amount, start_date, end_date, note))
+
         conn.commit()
-        return len(data_tuples)
+        return len(employee_ids)
     except Exception as e:
         conn.rollback()
         raise e

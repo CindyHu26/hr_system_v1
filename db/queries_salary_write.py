@@ -18,9 +18,7 @@ def delete_salary_drafts(conn, year: int, month: int):
 
 def _recalculate_and_save_salary_summaries(conn, salary_ids: list):
     """
-    【V3 - 修正版】
     根據 salary_id 列表，重新計算其對應的薪資總額並更新回 salary 主表。
-    此版本確保在同一個交易中，能正確讀取到剛更新的明細。
     """
     if not salary_ids:
         return
@@ -28,7 +26,6 @@ def _recalculate_and_save_salary_summaries(conn, salary_ids: list):
     cursor = conn.cursor()
     placeholders = ','.join('?' for _ in salary_ids)
 
-    # 直接使用 cursor 執行查詢，確保在同一個交易中
     details_query = f"""
         SELECT sd.salary_id, si.type, sd.amount, si.name as item_name
         FROM salary_detail sd
@@ -37,14 +34,11 @@ def _recalculate_and_save_salary_summaries(conn, salary_ids: list):
     """
     rows = cursor.execute(details_query, salary_ids).fetchall()
     
-    # 手動將查詢結果轉為 DataFrame
     details_df = pd.DataFrame(rows, columns=[description[0] for description in cursor.description])
 
     if details_df.empty:
-        # 如果一個員工的所有薪資項目都被刪除，總額應歸零
         summary_updates = [(0, 0, 0, 0, 0, sid) for sid in salary_ids]
     else:
-        # 使用 DataFrame 進行計算
         summary = details_df.groupby(['salary_id', 'type'])['amount'].sum().unstack(fill_value=0)
         summary_updates = []
         for sid in salary_ids:
@@ -52,7 +46,6 @@ def _recalculate_and_save_salary_summaries(conn, salary_ids: list):
             total_deduction = summary.loc[sid, 'deduction'] if 'deduction' in summary.columns and sid in summary.index else 0
             net_salary = total_payable + total_deduction
 
-            # 重新計算銀行匯款與現金
             bank_transfer_items_df = details_df[
                 (details_df['salary_id'] == sid) &
                 (details_df['item_name'].isin(['底薪', '加班費(延長工時)', '加班費(再延長工時)', '勞保費', '健保費', '事假', '病假', '遲到', '早退']))
@@ -76,64 +69,63 @@ def _recalculate_and_save_salary_summaries(conn, salary_ids: list):
 
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):
-    """
-    【修正後版本】
-    在儲存完所有明細後，主動呼叫總額重新計算函式。
-    """
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
     item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
     
-    # 建立一個列表來追蹤被修改過的 salary 主紀錄 ID
-    affected_salary_ids = []
-
     try:
         cursor.execute("BEGIN TRANSACTION")
+        
+        all_affected_salary_ids = []
+
         for _, row in df.iterrows():
             emp_id = emp_map.get(row['員工姓名'])
             if not emp_id: continue
 
+            # 確保 salary 主紀錄存在
+            cursor.execute("""
+                INSERT INTO salary (employee_id, year, month, status)
+                VALUES (?, ?, ?, 'draft')
+                ON CONFLICT(employee_id, year, month) DO NOTHING
+            """, (emp_id, year, month))
+            
+            salary_id = cursor.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", (emp_id, year, month)).fetchone()[0]
+            all_affected_salary_ids.append(salary_id)
+
+            # 更新備註和勞退提撥
             pension = row.get('勞退提撥', 0); pension = 0 if pd.isna(pension) else int(pension)
             note = row.get('備註', ''); note = '' if pd.isna(note) else note
-            payable = row.get('應付總額', 0); payable = 0 if pd.isna(payable) else int(payable)
-            deduction = row.get('應扣總額', 0); deduction = 0 if pd.isna(deduction) else int(deduction)
-            net = row.get('實支金額', 0); net = 0 if pd.isna(net) else int(net)
-            bank = row.get('匯入銀行', 0); bank = 0 if pd.isna(bank) else int(bank)
-            cash = row.get('現金', 0); cash = 0 if pd.isna(cash) else int(cash)
-
-
-            cursor.execute("""
-                INSERT INTO salary (employee_id, year, month, status, employer_pension_contribution, note, total_payable, total_deduction, net_salary, bank_transfer_amount, cash_amount)
-                VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(employee_id, year, month)
-                DO UPDATE SET status = 'draft', employer_pension_contribution = excluded.employer_pension_contribution, note = excluded.note,
-                               total_payable = excluded.total_payable, total_deduction = excluded.total_deduction, net_salary = excluded.net_salary,
-                               bank_transfer_amount = excluded.bank_transfer_amount, cash_amount = excluded.cash_amount
-                WHERE status != 'final'
-            """, (emp_id, year, month, pension, note, payable, deduction, net, bank, cash))
-
-            salary_id_result = cursor.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", (emp_id, year, month)).fetchone()
-            if not salary_id_result: continue
-            salary_id = salary_id_result[0]
+            cursor.execute("UPDATE salary SET employer_pension_contribution = ?, note = ? WHERE id = ?", (pension, note, salary_id))
             
-            # 刪除舊的薪資明細
+            # 刪除舊明細，準備插入新明細
             cursor.execute("DELETE FROM salary_detail WHERE salary_id = ?", (salary_id,))
             
-            # 準備插入新的薪資明細
             details_to_insert = []
             for k, v in row.items():
                 if k in item_map and pd.notna(v) and v != 0:
-                    details_to_insert.append((salary_id, item_map[k], int(v)))
+                    # 分離勞健保
+                    if k == '勞健保':
+                        if '勞保費' in item_map and pd.notna(row['勞保費']) and row['勞保費'] != 0:
+                            details_to_insert.append((salary_id, item_map['勞保費'], int(row['勞保費'])))
+                        if '健保費' in item_map and pd.notna(row['健保費']) and row['健保費'] != 0:
+                            details_to_insert.append((salary_id, item_map['健保費'], int(row['健保費'])))
+                    else:
+                        details_to_insert.append((salary_id, item_map[k], int(v)))
 
             if details_to_insert:
                 cursor.executemany("INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)", details_to_insert)
         
+        # 在交易結束前，對所有受影響的紀錄重新計算總額
+        if all_affected_salary_ids:
+            _recalculate_and_save_salary_summaries(conn, list(set(all_affected_salary_ids)))
+
         conn.commit()
     except Exception as e:
         conn.rollback()
         raise e
 
 def finalize_salary_records(conn, year, month, df: pd.DataFrame):
+    # 此函式維持不變
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
 
@@ -162,8 +154,8 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
 
     conn.commit()
 
-
 def revert_salary_to_draft(conn, year, month, employee_ids: list):
+    # 此函式維持不變
     if not employee_ids: return 0
     cursor = conn.cursor()
     placeholders = ','.join('?' for _ in employee_ids)
@@ -174,6 +166,7 @@ def revert_salary_to_draft(conn, year, month, employee_ids: list):
     return cursor.rowcount
 
 def batch_upsert_salary_details(conn, data_to_upsert: list):
+    # 此函式維持不變
     if not data_to_upsert: return 0
     cursor = conn.cursor()
     try:
@@ -190,38 +183,5 @@ def batch_upsert_salary_details(conn, data_to_upsert: list):
         
         conn.commit()
         return cursor.rowcount
-    except Exception as e:
-        conn.rollback(); raise e
-
-def update_salary_preview_data(conn, year: int, month: int, df_to_update: pd.DataFrame):
-    if df_to_update.empty: return 0
-    cursor = conn.cursor()
-    salary_id_map = pd.read_sql("SELECT id, employee_id FROM salary WHERE year = ? AND month = ?", conn, params=(year, month)).set_index('employee_id')['id'].to_dict()
-    item_map = pd.read_sql("SELECT id, name FROM salary_item", conn).set_index('name')['id'].to_dict()
-    base_salary_id, labor_fee_id, health_fee_id = item_map.get('底薪'), item_map.get('勞保費'), item_map.get('健保費')
-    updates_for_details, updates_for_pension = [], []
-    for _, row in df_to_update.iterrows():
-        emp_id = row['employee_id']
-        salary_id = salary_id_map.get(emp_id)
-        if not salary_id: continue
-        if base_salary_id: updates_for_details.append((row['底薪'], salary_id, base_salary_id))
-        if labor_fee_id: updates_for_details.append((row['勞保費'], salary_id, labor_fee_id))
-        if health_fee_id: updates_for_details.append((row['健保費'], salary_id, health_fee_id))
-        updates_for_pension.append((row['勞退提撥'], salary_id))
-    try:
-        cursor.execute("BEGIN TRANSACTION")
-        detail_sql = """
-            INSERT INTO salary_detail (amount, salary_id, salary_item_id) VALUES (?, ?, ?)
-            ON CONFLICT(salary_id, salary_item_id) DO UPDATE SET amount = excluded.amount;
-        """
-        cursor.executemany(detail_sql, updates_for_details)
-        pension_sql = "UPDATE salary SET employer_pension_contribution = ? WHERE id = ?"
-        cursor.executemany(pension_sql, updates_for_pension)
-        
-        affected_salary_ids = list(set(salary_id_map.values()))
-        _recalculate_and_save_salary_summaries(conn, affected_salary_ids)
-        
-        conn.commit()
-        return len(df_to_update)
     except Exception as e:
         conn.rollback(); raise e
