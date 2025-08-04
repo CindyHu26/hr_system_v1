@@ -62,69 +62,44 @@ def show_page(conn):
                     st.info("目前沒有可供修改的紀錄。")
 
             st.markdown("---")
-            st.subheader("個人出勤記錄編輯區 (Excel 批次修改)")
-            
+            st.subheader("批次修改出勤紀錄 (Excel)")
+            st.info("此功能允許您下載特定員工的出勤紀錄範本，在 Excel 中修改後再上傳，系統會自動更新變更的紀錄。")
+
+            # --- 模式選擇 ---
+            edit_mode = st.radio(
+                "選擇編輯模式",
+                ("單人模式 (修改特定一位員工)", "多人模式 (修改多位員工)"),
+                horizontal=True,
+                key="att_edit_mode"
+            )
+
+            # --- 獲取員工列表 ---
             all_employees = q_emp.get_all_employees(conn)
             emp_options = {f"{name} ({code})": emp_id for name, code, emp_id in zip(all_employees['name_ch'], all_employees['hr_code'], all_employees['id'])}
-            
-            selected_emp_key = st.selectbox("選擇要編輯的員工", options=emp_options.keys(), index=None, key="bulk_edit_selector")
 
-            if selected_emp_key:
-                emp_id = emp_options[selected_emp_key]
-                
-                # 獲取該員工當月的出勤紀錄
-                emp_att_df = q_att.get_attendance_by_employee_month(conn, emp_id, year, month)
-                st.session_state.original_emp_att_df_for_excel = emp_att_df.copy() # 儲存原始資料供後續比對
-
-                st.markdown("##### 步驟 1: 下載編輯範本")
-                
-                output = io.BytesIO()
-                # 只提供最關鍵的欄位讓使用者修改
-                df_for_export = emp_att_df[['id', 'date', 'checkin_time', 'checkout_time']].copy()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_for_export.to_excel(writer, index=False, sheet_name='出勤紀錄')
-                
-                st.download_button(
-                    label=f"📥 下載 {selected_emp_key} 的 {month} 月出勤紀錄",
-                    data=output.getvalue(),
-                    file_name=f"attendance_{selected_emp_key}_{year}-{month:02d}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            if edit_mode == "單人模式 (修改特定一位員工)":
+                # 將 key 改為 "bulk_single_edit_selector" 以避免衝突
+                selected_emp_key = st.selectbox(
+                    "選擇要編輯的員工", 
+                    options=emp_options.keys(), 
+                    index=None, 
+                    key="bulk_single_edit_selector" 
                 )
+                
+                if selected_emp_key:
+                    emp_id_list = [emp_options[selected_emp_key]]
+                    file_name_prefix = f"attendance_{selected_emp_key}"
+                    display_bulk_edit_interface(conn, emp_id_list, year, month, file_name_prefix)
 
-                st.markdown("---")
-                st.markdown("##### 步驟 2: 上傳修改後的檔案並儲存")
-                with st.form("upload_edited_attendance"):
-                    uploaded_file = st.file_uploader("上傳修改後的 Excel 檔案", type=['xlsx'])
-                    
-                    if st.form_submit_button("💾 儲存變更", type="primary"):
-                        if uploaded_file:
-                            with st.spinner("正在讀取檔案並儲存變更..."):
-                                try:
-                                    edited_df = pd.read_excel(uploaded_file, dtype={'checkin_time': str, 'checkout_time': str})
-                                    original_df = st.session_state.original_emp_att_df_for_excel
-                                    
-                                    # 合併以找出差異
-                                    merged_df = pd.merge(original_df, edited_df, on='id', suffixes=('_orig', '_new'))
-                                    
-                                    updates_count = 0
-                                    for _, row in merged_df.iterrows():
-                                        if row['checkin_time_orig'] != row['checkin_time_new'] or row['checkout_time_orig'] != row['checkout_time_new']:
-                                            try: new_checkin = datetime.strptime(row['checkin_time_new'], '%H:%M:%S').time()
-                                            except: new_checkin = time(0, 0)
-                                            try: new_checkout = datetime.strptime(row['checkout_time_new'], '%H:%M:%S').time()
-                                            except: new_checkout = time(0, 0)
-                                                
-                                            new_minutes = logic_att.recalculate_attendance_minutes(new_checkin, new_checkout)
-                                            q_att.update_attendance_record(conn, row['id'], new_checkin, new_checkout, new_minutes)
-                                            updates_count += 1
-                                    
-                                    st.success(f"成功更新了 {updates_count} 筆紀錄！")
-                                    st.rerun()
-
-                                except Exception as e:
-                                    st.error(f"處理上傳檔案時發生錯誤：{e}")
-                        else:
-                            st.warning("請先上傳檔案。")
+            elif edit_mode == "多人模式 (修改多位員工)":
+                from utils.ui_components import employee_selector # 局部導入
+                
+                st.markdown("##### 選擇要包含在範本中的員工")
+                selected_emp_ids = employee_selector(conn, key_prefix="att_bulk_edit")
+                
+                if selected_emp_ids:
+                    file_name_prefix = f"attendance_multiple_staff"
+                    display_bulk_edit_interface(conn, selected_emp_ids, year, month, file_name_prefix)
 
         except Exception as e:
             st.error(f"讀取或操作出勤紀錄時發生錯誤: {e}")
@@ -166,3 +141,71 @@ def show_page(conn):
                     except Exception as e:
                         st.error(f"匹配或匯入過程中發生嚴重錯誤：{e}")
                         st.code(traceback.format_exc())
+
+
+def display_bulk_edit_interface(conn, emp_id_list, year, month, file_name_prefix):
+    """一個共用的 UI 函式，用於顯示下載按鈕和上傳表單"""
+    
+    st.markdown("##### 步驟 1: 下載編輯範本")
+    
+    emp_att_df_list = []
+    for emp_id in emp_id_list:
+        df = q_att.get_attendance_by_employee_month(conn, emp_id, year, month)
+        emp_info = q_common.get_by_id(conn, 'employee', emp_id)
+        if df.empty:
+             df = pd.DataFrame([{'id':None, 'employee_id': emp_id, 'date': f'{year}-{month}-01', 'checkin_time': None, 'checkout_time': None}])
+        df['員工姓名'] = emp_info['name_ch'] if emp_info else '未知員工'
+        emp_att_df_list.append(df)
+    
+    if not emp_att_df_list:
+        st.warning("所選員工在此月份沒有任何出勤紀錄可供下載。")
+        return
+
+    full_emp_att_df = pd.concat(emp_att_df_list, ignore_index=True)
+    
+    output = io.BytesIO()
+    df_for_export = full_emp_att_df[['id', '員工姓名', 'date', 'checkin_time', 'checkout_time']].copy()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_for_export.to_excel(writer, index=False, sheet_name='出勤紀錄')
+    
+    st.download_button(
+        label=f"📥 下載 {month} 月出勤紀錄範本",
+        data=output.getvalue(),
+        file_name=f"{file_name_prefix}_{year}-{month:02d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    st.markdown("---")
+    st.markdown("##### 步驟 2: 上傳修改後的檔案並儲存")
+    with st.form(f"upload_edited_attendance_{file_name_prefix}"):
+        uploaded_file = st.file_uploader("上傳修改後的 Excel 檔案", type=['xlsx'])
+        
+        if st.form_submit_button("💾 儲存變更", type="primary"):
+            if uploaded_file:
+                with st.spinner("正在讀取檔案並儲存變更..."):
+                    try:
+                        edited_df = pd.read_excel(uploaded_file, dtype={'checkin_time': str, 'checkout_time': str})
+                        
+                        edited_df.dropna(subset=['id'], inplace=True)
+                        edited_df['id'] = edited_df['id'].astype(int)
+
+                        updates_count = 0
+                        for _, row in edited_df.iterrows():
+                            try: new_checkin = datetime.strptime(row['checkin_time'], '%H:%M:%S').time() if pd.notna(row['checkin_time']) else time(0,0)
+                            except (TypeError, ValueError): new_checkin = time(0, 0)
+                                
+                            try: new_checkout = datetime.strptime(row['checkout_time'], '%H:%M:%S').time() if pd.notna(row['checkout_time']) else time(0,0)
+                            except (TypeError, ValueError): new_checkout = time(0, 0)
+                            
+                            new_minutes = logic_att.recalculate_attendance_minutes(new_checkin, new_checkout)
+                            q_att.update_attendance_record(conn, row['id'], new_checkin, new_checkout, new_minutes)
+                            updates_count += 1
+                        
+                        st.success(f"成功更新了 {updates_count} 筆紀錄！")
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"處理上傳檔案時發生錯誤：{e}")
+            else:
+                st.warning("請先上傳檔案。")

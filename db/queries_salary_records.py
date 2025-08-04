@@ -237,7 +237,7 @@ def get_cumulative_bonus_for_year(conn, employee_id: int, year: int, bonus_item_
     FROM salary_detail sd
     JOIN salary s ON sd.salary_id = s.id
     JOIN salary_item si ON sd.salary_item_id = si.id
-    WHERE s.employee_id = ? AND s.year = ? AND si.name = '二代健保補充費';
+    WHERE s.employee_id = ? AND s.year = ? AND si.name = '二代健保(高額獎金)';
     """
     premium_params = (employee_id, year)
     deducted_premium = cursor.execute(premium_query, premium_params).fetchone()[0] or 0

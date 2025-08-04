@@ -29,7 +29,7 @@ def show_page(conn):
     st.info("管理員工的薪資基準歷史，並直接預覽依此計算的勞健保費用。薪資單將以此處的資料為準。")
 
     # 統一使用頁籤管理功能
-    tab1, tab2 = st.tabs(["📖 歷史紀錄總覽與維護", "🚀 批次匯入 (Excel)"])
+    tab1, tab2, tab3 = st.tabs(["📖 歷史紀錄總覽與維護", "🚀 批次匯入 (Excel)", "⚡️ 批次調整基本工資"])
 
     with tab1:
         st.subheader("歷史紀錄總覽")
@@ -198,3 +198,47 @@ def show_page(conn):
             import_logic_func=logic_base.batch_import_salary_base,
             conn=conn
         )
+
+    with tab3:
+        st.subheader("批次調整基本工資")
+        st.warning("此功能會為所有目前底薪低於您所設定之「新基本工資」的在職員工，新增一筆調薪紀錄。")
+
+        from db import queries_config as q_config # 局部導入
+        
+        today = datetime.now()
+        current_minimum_wage = q_config.get_minimum_wage_for_year(conn, today.year)
+        
+        with st.form("batch_update_salary_form"):
+            c1, c2 = st.columns(2)
+            new_wage = c1.number_input(
+                "新基本工資*", 
+                min_value=20000, 
+                step=100, 
+                value=current_minimum_wage
+            )
+            effective_date = c2.date_input("統一調整生效日*", value=datetime(today.year, 1, 1))
+            
+            if st.form_submit_button("1. 預覽受影響的員工"):
+                with st.spinner("正在查找底薪低於目標的員工..."):
+                    df_to_update = q_base.get_employees_below_minimum_wage(conn, new_wage)
+                    if df_to_update.empty:
+                        st.success("太棒了！目前沒有任何在職員工的薪資低於您設定的金額。")
+                        if 'df_to_update_salary' in st.session_state:
+                            del st.session_state['df_to_update_salary']
+                    else:
+                        st.session_state.df_to_update_salary = df_to_update
+            
+        if 'df_to_update_salary' in st.session_state:
+            st.markdown("---")
+            st.markdown("#### 預覽與確認")
+            df_preview = st.session_state.df_to_update_salary
+            st.write(f"系統偵測到以下 {len(df_preview)} 位員工的底薪將從「目前底薪」被調整為 **{new_wage}** 元：")
+            
+            st.dataframe(df_preview[['員工姓名', '目前底薪', '目前投保薪資']], use_container_width=True)
+
+            if st.button(f"2. 確認執行 {len(df_preview)} 位員工的批次調薪", type="primary"):
+                with st.spinner("正在批次寫入調薪紀錄..."):
+                    updated_count = q_base.batch_update_base_salary(conn, df_preview, new_wage, effective_date)
+                    st.success(f"成功為 {updated_count} 位員工新增了調薪紀錄！")
+                    del st.session_state.df_to_update_salary
+                    st.rerun()
