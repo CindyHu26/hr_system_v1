@@ -7,8 +7,9 @@ from utils.helpers import get_monthly_dates
 
 def get_salary_report_for_editing(conn, year, month):
     """
-    V2: 大幅簡化，不再重新計算總額，而是直接從 salary 主表讀取。
-    確保了顯示的數據與資料庫中的真實狀態永遠一致。
+    V3: 修正版
+    - 確保「勞保費」、「健保費」與加總後的「勞健保」欄位都存在於最終的 DataFrame 中，
+      以解決 data_editor 儲存後資料遺失的問題。
     """
     start_date, end_date = get_monthly_dates(year, month)
     active_emp_df = pd.read_sql_query(
@@ -57,12 +58,13 @@ def get_salary_report_for_editing(conn, year, month):
         if item not in report_df.columns:
             report_df[item] = 0
 
-    for col in ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金', '勞退提撥']:
-        if col not in report_df.columns:
-            report_df[col] = 0
-
+    # 確保先填補缺失值再進行計算
     report_df.fillna(0, inplace=True)
-    report_df['勞健保'] = pd.to_numeric(report_df.get('勞保費', 0), errors='coerce').fillna(0) + pd.to_numeric(report_df.get('健保費', 0), errors='coerce').fillna(0)
+    
+    # 【核心修正】在這裡確保 '勞保費' 和 '健保費' 欄位存在且為數字
+    report_df['勞保費'] = pd.to_numeric(report_df.get('勞保費', 0), errors='coerce').fillna(0)
+    report_df['健保費'] = pd.to_numeric(report_df.get('健保費', 0), errors='coerce').fillna(0)
+    report_df['勞健保'] = report_df['勞保費'] + report_df['健保費']
 
     core_info = ['employee_id', '員工姓名', '員工編號', 'status']
     earning_cols = [c for c, t in item_types.items() if t == 'earning' and c in report_df.columns]
@@ -72,8 +74,10 @@ def get_salary_report_for_editing(conn, year, month):
     other_earnings = sorted([c for c in earning_cols if c not in earning_order])
     all_earnings = earning_order + other_earnings
     
-    deduction_order = ['勞健保', '遲到', '早退', '事假', '病假']
-    other_deductions = sorted([c for c in deduction_cols if c not in deduction_order and c not in ['勞保費', '健保費']])
+    # 【核心修正】重新定義扣除項的順序，確保三個欄位都包含在內
+    deduction_order = ['勞保費', '健保費', '勞健保', '遲到', '早退', '事假', '病假']
+    # 這裡的邏輯也要跟著調整，避免重複包含
+    other_deductions = sorted([c for c in deduction_cols if c not in deduction_order])
     all_deductions = deduction_order + other_deductions
     
     summary_cols = ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金', '勞退提撥', 'note']
@@ -88,7 +92,10 @@ def get_salary_report_for_editing(conn, year, month):
     if 'note' in final_cols_ordered:
         final_cols_ordered[final_cols_ordered.index('note')] = '備註'
     
-    return report_df[final_cols_ordered].sort_values(by='員工編號').reset_index(drop=True), item_types
+    # 確保最終 DataFrame 的欄位是唯一的
+    final_cols_ordered_unique = list(dict.fromkeys(final_cols_ordered))
+
+    return report_df[final_cols_ordered_unique].sort_values(by='員工編號').reset_index(drop=True), item_types
 
 def get_annual_salary_summary_data(conn, year: int, item_ids: list):
     if not item_ids: return pd.DataFrame()
