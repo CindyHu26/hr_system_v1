@@ -71,9 +71,21 @@ def calculate_salary_df(conn, year, month):
     for emp in employees:
         emp_id, emp_name = emp['id'], emp['name_ch']
         details = {'employee_id': emp_id, '員工姓名': emp_name, '員工編號': emp['hr_code']}
+        
+        # 查詢薪資基準
         base_info = q_base.get_employee_base_salary_info(conn, emp_id, year, month)
-        if not base_info: continue
-
+        
+        # 如果找不到薪資基準，不再跳過，而是建立一個預設值
+        if not base_info:
+            base_info = {
+                'base_salary': 0, 'insurance_salary': 0,
+                'dependents_under_18': 0, 'dependents_over_18': 0,
+                'labor_insurance_override': None, 
+                'health_insurance_override': None, 
+                'pension_override': None
+            }
+        
+        # 後續計算會以 base_salary = 0 為基礎，確保與底薪無關的項目能被處理
         base_salary = base_info['base_salary']
         details['底薪'] = int(round(base_salary))
         
@@ -83,7 +95,7 @@ def calculate_salary_df(conn, year, month):
 
             # --- 計算邏輯 ---
             # 1. 常態薪資項目
-            # 【核心修正】呼叫更新後的函式
+            # 呼叫更新後的函式
             for item in q_allow.get_employee_recurring_items(conn, emp_id, year, month):
                 details[item['name']] = -abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount'])
 
@@ -176,7 +188,8 @@ def calculate_salary_df(conn, year, month):
                 if total_earnings_for_part_time > MINIMUM_WAGE_OF_YEAR:
                     part_time_premium = math.ceil(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
                     if part_time_premium > 0: details['二代健保(兼職)'] = -int(part_time_premium)
-            
+
+        if base_salary > 0 and emp['title'] != '協理':
             unpaid_days_df = pd.read_sql_query(f"SELECT date FROM special_unpaid_days WHERE strftime('%Y-%m', date) = '{year}-{month:02d}'", conn)
             unpaid_dates = set(pd.to_datetime(unpaid_days_df['date']).dt.date)
 
