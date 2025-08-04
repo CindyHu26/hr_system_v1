@@ -38,13 +38,10 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
         total_health_fee = health_fee_base * (1 + health_ins_count)
     return int(round(labor_fee)), int(round(total_health_fee))
 
-
-# In services/salary_logic.py
-
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V30:
-    - 【核心修正】在產生草稿時，直接計算總計金額並準備好寫入 salary 主表。
+    薪資試算引擎 V31:
+    - 【核心修正】修正 bank_transfer_amount 的計算邏輯，避免 'int' object has no attribute 'iloc' 錯誤。
     """
     db_configs = q_config.get_all_configs(conn)
     MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
@@ -194,7 +191,7 @@ def calculate_salary_df(conn, year, month):
             else:
                 details['底薪'] -= int(round(unpaid_deduction))
 
-        # --- 【核心修正】在迴圈的最後，直接計算總計金額 ---
+        # --- 在迴圈的最後，直接計算總計金額 ---
         temp_df = pd.DataFrame([details])
         
         current_item_types = item_types.copy()
@@ -209,7 +206,8 @@ def calculate_salary_df(conn, year, month):
         net_salary = total_payable + total_deduction
         
         bank_transfer_items = ['底薪', '加班費(延長工時)', '加班費(再延長工時)', '勞保費', '健保費', '事假', '病假', '遲到', '早退']
-        bank_transfer_amount = sum(temp_df.get(item, 0).iloc[0] for item in bank_transfer_items)
+        existing_bank_items = [item for item in bank_transfer_items if item in temp_df.columns]
+        bank_transfer_amount = temp_df[existing_bank_items].sum(axis=1).iloc[0]
         cash_amount = net_salary - bank_transfer_amount
 
         details['應付總額'] = int(round(total_payable))

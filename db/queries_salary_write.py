@@ -6,48 +6,62 @@ import pandas as pd
 
 def _recalculate_and_save_salary_summaries(conn, salary_ids: list):
     """
+    【V3 - 修正版】
     根據 salary_id 列表，重新計算其對應的薪資總額並更新回 salary 主表。
+    此版本確保在同一個交易中，能正確讀取到剛更新的明細。
     """
     if not salary_ids:
         return
-    
+
+    cursor = conn.cursor()
     placeholders = ','.join('?' for _ in salary_ids)
-    
+
+    # 直接使用 cursor 執行查詢，確保在同一個交易中
     details_query = f"""
-        SELECT sd.salary_id, si.name as item_name, si.type, sd.amount
+        SELECT sd.salary_id, si.type, sd.amount, si.name as item_name
         FROM salary_detail sd
         JOIN salary_item si ON sd.salary_item_id = si.id
         WHERE sd.salary_id IN ({placeholders})
     """
-    details_df = pd.read_sql_query(details_query, conn, params=salary_ids)
+    rows = cursor.execute(details_query, salary_ids).fetchall()
     
+    # 手動將查詢結果轉為 DataFrame
+    details_df = pd.DataFrame(rows, columns=[description[0] for description in cursor.description])
+
     if details_df.empty:
+        # 如果一個員工的所有薪資項目都被刪除，總額應歸零
         summary_updates = [(0, 0, 0, 0, 0, sid) for sid in salary_ids]
     else:
+        # 使用 DataFrame 進行計算
         summary = details_df.groupby(['salary_id', 'type'])['amount'].sum().unstack(fill_value=0)
         summary_updates = []
         for sid in salary_ids:
             total_payable = summary.loc[sid, 'earning'] if 'earning' in summary.columns and sid in summary.index else 0
             total_deduction = summary.loc[sid, 'deduction'] if 'deduction' in summary.columns and sid in summary.index else 0
             net_salary = total_payable + total_deduction
-            
+
+            # 重新計算銀行匯款與現金
             bank_transfer_items_df = details_df[
-                (details_df['salary_id'] == sid) & 
+                (details_df['salary_id'] == sid) &
                 (details_df['item_name'].isin(['底薪', '加班費(延長工時)', '加班費(再延長工時)', '勞保費', '健保費', '事假', '病假', '遲到', '早退']))
             ]
             bank_transfer_amount = bank_transfer_items_df['amount'].sum()
             cash_amount = net_salary - bank_transfer_amount
 
-            summary_updates.append((total_payable, total_deduction, net_salary, bank_transfer_amount, cash_amount, sid))
+            summary_updates.append((
+                int(round(total_payable)), int(round(total_deduction)), int(round(net_salary)),
+                int(round(bank_transfer_amount)), int(round(cash_amount)),
+                sid
+            ))
 
-    cursor = conn.cursor()
     update_sql = """
-        UPDATE salary 
+        UPDATE salary
         SET total_payable = ?, total_deduction = ?, net_salary = ?,
             bank_transfer_amount = ?, cash_amount = ?
         WHERE id = ? AND status = 'draft'
     """
     cursor.executemany(update_sql, summary_updates)
+
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):
     cursor = conn.cursor()
@@ -60,29 +74,36 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
             emp_id = emp_map.get(row['員工姓名'])
             if not emp_id: continue
 
+            # 統一處理 NaN 和 None 為 0 或空字串
+            pension = row.get('勞退提撥', 0); pension = 0 if pd.isna(pension) else int(pension)
+            note = row.get('備註', ''); note = '' if pd.isna(note) else note
+            payable = row.get('應付總額', 0); payable = 0 if pd.isna(payable) else int(payable)
+            deduction = row.get('應扣總額', 0); deduction = 0 if pd.isna(deduction) else int(deduction)
+            net = row.get('實支金額', 0); net = 0 if pd.isna(net) else int(net)
+            bank = row.get('匯入銀行', 0); bank = 0 if pd.isna(bank) else int(bank)
+            cash = row.get('現金', 0); cash = 0 if pd.isna(cash) else int(cash)
+
+
             cursor.execute("""
-                INSERT INTO salary (employee_id, year, month, status, employer_pension_contribution, note, total_payable, total_deduction, net_salary, bank_transfer_amount, cash_amount) 
-                VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?) 
-                ON CONFLICT(employee_id, year, month) 
+                INSERT INTO salary (employee_id, year, month, status, employer_pension_contribution, note, total_payable, total_deduction, net_salary, bank_transfer_amount, cash_amount)
+                VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(employee_id, year, month)
                 DO UPDATE SET status = 'draft', employer_pension_contribution = excluded.employer_pension_contribution, note = excluded.note,
                                total_payable = excluded.total_payable, total_deduction = excluded.total_deduction, net_salary = excluded.net_salary,
                                bank_transfer_amount = excluded.bank_transfer_amount, cash_amount = excluded.cash_amount
                 WHERE status != 'final'
-            """, (emp_id, year, month, row.get('勞退提撥', 0), row.get('備註', ''), row.get('應付總額', 0), row.get('應扣總額', 0), row.get('實支金額', 0), row.get('匯入銀行', 0), row.get('現金', 0)))
+            """, (emp_id, year, month, pension, note, payable, deduction, net, bank, cash))
+
+            salary_id_result = cursor.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", (emp_id, year, month)).fetchone()
+            if not salary_id_result: continue
+            salary_id = salary_id_result[0]
             
-            salary_id = cursor.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", (emp_id, year, month)).fetchone()[0]
             cursor.execute("DELETE FROM salary_detail WHERE salary_id = ?", (salary_id,))
             
             details_to_insert = []
             for k, v in row.items():
-                if k in item_map and pd.notna(v):
-                    if k == '勞健保':
-                        if '勞保費' in item_map and pd.notna(row['勞保費']):
-                            details_to_insert.append((salary_id, item_map['勞保費'], int(row['勞保費'])))
-                        if '健保費' in item_map and pd.notna(row['健保費']):
-                            details_to_insert.append((salary_id, item_map['健保費'], int(row['健保費'])))
-                    else:
-                        details_to_insert.append((salary_id, item_map[k], int(v)))
+                if k in item_map and pd.notna(v) and v != 0:
+                    details_to_insert.append((salary_id, item_map[k], int(v)))
 
             if details_to_insert:
                 cursor.executemany("INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)", details_to_insert)
@@ -94,20 +115,20 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
 def finalize_salary_records(conn, year, month, df: pd.DataFrame):
     cursor = conn.cursor()
     emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
-    
+
     for _, row in df.iterrows():
         emp_id = emp_map.get(row['員工姓名'])
         if not emp_id: continue
-        
+
         params = {
-            'total_payable': row.get('應付總額', 0), 'total_deduction': row.get('應扣總額', 0),
-            'net_salary': row.get('實支金額', 0), 'bank_transfer_amount': row.get('匯入銀行', 0),
-            'cash_amount': row.get('現金', 0), 'status': 'final',
-            'employer_pension_contribution': row.get('勞退提撥', 0),
-            'note': row.get('備註', ''),
+            'total_payable': int(row.get('應付總額', 0)), 'total_deduction': int(row.get('應扣總額', 0)),
+            'net_salary': int(row.get('實支金額', 0)), 'bank_transfer_amount': int(row.get('匯入銀行', 0)),
+            'cash_amount': int(row.get('現金', 0)), 'status': 'final',
+            'employer_pension_contribution': int(row.get('勞退提撥', 0)),
+            'note': str(row.get('備註', '')) if pd.notna(row.get('備註')) else '',
             'employee_id': emp_id, 'year': year, 'month': month
         }
-        
+
         cursor.execute("""
             UPDATE salary SET
             total_payable = :total_payable, total_deduction = :total_deduction,
@@ -117,8 +138,9 @@ def finalize_salary_records(conn, year, month, df: pd.DataFrame):
             note = :note
             WHERE employee_id = :employee_id AND year = :year AND month = :month
         """, params)
-        
+
     conn.commit()
+
 
 def revert_salary_to_draft(conn, year, month, employee_ids: list):
     if not employee_ids: return 0
