@@ -12,6 +12,7 @@ from db import queries_salary_records as q_records
 from db import queries_insurance as q_ins
 from db import queries_bonus as q_bonus
 from db import queries_performance_bonus as q_perf
+from db import queries_loan as q_loan
 from db import queries_allowances as q_allow
 from db import queries_config as q_config
 from services import overtime_logic
@@ -145,7 +146,10 @@ def calculate_salary_df(conn, year, month):
         if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
         perf_bonus_result = q_perf.get_performance_bonus(conn, emp_id, year, month)
         if perf_bonus_result: details['績效獎金'] = int(round(perf_bonus_result))
-        
+        loan_amount = q_loan.get_employee_loan(conn, emp_id, year, month)
+        if loan_amount > 0:
+            details['借支'] = -int(loan_amount)
+
         # 二代健保補充保費計算 (邏輯分流)
         earning_cols_for_bonus = [col for col, type in item_types.items() if type == 'earning']
         

@@ -180,6 +180,19 @@ CREATE TABLE IF NOT EXISTS special_unpaid_days (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 每月借支紀錄表
+CREATE TABLE IF NOT EXISTS monthly_loan (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    amount INTEGER NOT NULL,
+    note TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(employee_id) REFERENCES employee(id) ON DELETE CASCADE,
+    UNIQUE(employee_id, year, month)
+);
+
 -- --- 索引優化 (Index Optimizations) ---
 CREATE INDEX IF NOT EXISTS idx_employee_id_on_attendance ON attendance (employee_id);
 CREATE INDEX IF NOT EXISTS idx_employee_id_on_special_attendance ON special_attendance (employee_id);
@@ -193,3 +206,4 @@ CREATE INDEX IF NOT EXISTS idx_date_on_attendance ON attendance (date);
 CREATE INDEX IF NOT EXISTS idx_date_on_leave_record ON leave_record (start_date);
 CREATE INDEX IF NOT EXISTS idx_year_month_on_monthly_bonus_details ON monthly_bonus_details (year, month);
 CREATE INDEX IF NOT EXISTS idx_employee_id_on_monthly_performance_bonus ON monthly_performance_bonus (employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_id_on_monthly_loan ON monthly_loan (employee_id);
