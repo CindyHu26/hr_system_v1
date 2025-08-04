@@ -38,9 +38,11 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
     return int(round(labor_fee)), int(round(total_health_fee))
 
 
+# In services/salary_logic.py
+
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V28: 二代健保高額獎金改為分段結算
+    薪資試算引擎 V29: 修正 hourly_rate 定義順序，並整合老闆/不計薪假邏輯
     """
     db_configs = q_config.get_all_configs(conn)
     MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
@@ -61,8 +63,7 @@ def calculate_salary_df(conn, year, month):
     
     monthly_attendance = q_att.get_monthly_attendance_summary(conn, year, month)
     item_types = pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
-    unpaid_days_df = pd.read_sql_query(f"SELECT date FROM special_unpaid_days WHERE strftime('%Y-%m', date) = '{year}-{month:02d}'", conn)
-    unpaid_dates = set(pd.to_datetime(unpaid_days_df['date']).dt.date)
+
     all_salary_data = []
 
     for emp in employees:
@@ -74,11 +75,16 @@ def calculate_salary_df(conn, year, month):
         base_salary = base_info['base_salary']
         insurance_salary = base_info['insurance_salary'] or base_salary
 
+        # 規則 1: 如果職稱為'協理'，則只計算底薪，然後跳過所有後續計算
         if emp['title'] == '協理':
             details['底薪'] = int(round(base_salary))
             all_salary_data.append(details)
-            continue # 直接跳到下一個員工，不執行後續計算
+            continue 
         
+        # 先設定基礎的底薪和時薪，供後續所有項目計算使用
+        details['底薪'] = int(round(base_salary))
+        hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
+
         if emp['dept'] in ['服務', '行政']:
             entry_date_str = emp['entry_date']
             if pd.notna(entry_date_str):
@@ -149,58 +155,50 @@ def calculate_salary_df(conn, year, month):
         if perf_bonus_result: details['績效獎金'] = int(round(perf_bonus_result))
         
         if is_insured_in_company:
-            # 情況一：公司有加保 (計算高額獎金補充保費 - 僅在特定月份結算)
             period_to_check = None
-            # 端午節獎金結算 (於 6 月份薪資單)
             if month == 6:
                 period_to_check = {"start": 1, "end": 5, "year": year}
-            # 中秋節獎金結算 (於 11 月份薪資單)
             elif month == 11:
                 period_to_check = {"start": 6, "end": 10, "year": year}
-            # 年終獎金結算 (於隔年 1 月份薪資單)
             elif month == 1:
                 period_to_check = {"start": 11, "end": 12, "year": year - 1}
 
             if period_to_check:
-                p_year = period_to_check["year"]
-                p_start = period_to_check["start"]
-                p_end = period_to_check["end"]
-                
-                # 獲取該期間的累計獎金與已付補充保費
+                p_year, p_start, p_end = period_to_check["year"], period_to_check["start"], period_to_check["end"]
                 period_bonus, already_deducted = q_records.get_cumulative_bonus_for_period(
                     conn, emp_id, p_year, p_start, p_end, NHI_BONUS_ITEMS
                 )
-
                 if period_bonus > 0:
-                    # 結算時，以當前月份的投保薪資為基準
                     deduction_threshold = insurance_salary * NHI_BONUS_MULTIPLIER
                     if period_bonus > deduction_threshold:
                         taxable_bonus = period_bonus - deduction_threshold
                         total_premium_due = round(taxable_bonus * NHI_SUPPLEMENT_RATE)
-                        
                         this_month_premium = total_premium_due - already_deducted
-                        
                         if this_month_premium > 0:
                             details['二代健保(高額獎金)'] = -int(this_month_premium)
         else:
-            # 情況二：公司無加保 (計算兼職所得補充保費 - 維持每月計算)
             earning_cols = [col for col, item_type in item_types.items() if item_type == 'earning']
             total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols)
-
             if total_earnings_for_part_time > MINIMUM_WAGE_OF_YEAR:
                 part_time_premium = math.ceil(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
                 if part_time_premium > 0:
                     details['二代健保(兼職)'] = -int(part_time_premium)
         
+        # 規則 2: 最後才處理不計薪日的扣款
         adjusted_base_salary = base_salary
+        unpaid_days_df = pd.read_sql_query(f"SELECT date FROM special_unpaid_days WHERE strftime('%Y-%m', date) = '{year}-{month:02d}'", conn)
+        unpaid_dates = set(pd.to_datetime(unpaid_days_df['date']).dt.date)
+        # 規則 2: 處理不計薪日的扣款
         if emp['title'] != '舍監' and len(unpaid_dates) > 0:
-            adjusted_base_salary -= round(base_salary / 30) * len(unpaid_dates)
-        
-        if base_salary == MINIMUM_WAGE_OF_YEAR and adjusted_base_salary < MINIMUM_WAGE_OF_YEAR:
-            adjusted_base_salary = MINIMUM_WAGE_OF_YEAR
+            unpaid_deduction = round(base_salary / 30) * len(unpaid_dates)
+            
+            # 確保扣除後不會低於基本工資
+            if (base_salary - unpaid_deduction) < MINIMUM_WAGE_OF_YEAR:
+                adjusted_base_salary = MINIMUM_WAGE_OF_YEAR
+            else:
+                adjusted_base_salary -= unpaid_deduction
         
         details['底薪'] = int(round(adjusted_base_salary))
-        hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
 
         all_salary_data.append(details)
         

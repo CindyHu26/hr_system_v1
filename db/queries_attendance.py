@@ -115,9 +115,14 @@ def get_special_attendance_by_month(conn, year, month):
     return pd.read_sql_query(query, conn, params=(month_str,))
 
 def get_special_attendance_for_month(conn, employee_id, year, month):
-    """查詢員工指定月份的特別出勤紀錄。"""
+    """查詢員工指定月份的特別出勤紀錄，日期格式不管有無時分秒皆可查。"""
     month_str = f"{year}-{month:02d}"
-    query = "SELECT checkin_time, checkout_time FROM special_attendance WHERE employee_id = ? AND STRFTIME('%Y-%m', date) = ?"
+    query = """
+        SELECT checkin_time, checkout_time, date
+        FROM special_attendance
+        WHERE employee_id = ?
+        AND substr(replace(date, '/', '-'), 1, 7) = ?
+    """
     return conn.execute(query, (employee_id, month_str)).fetchall()
 
 def get_employee_leave_summary(conn, emp_id, year, month):

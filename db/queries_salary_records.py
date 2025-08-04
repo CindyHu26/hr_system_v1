@@ -73,7 +73,6 @@ def get_salary_report_for_editing(conn, year, month):
         report_df.loc[final_mask, '匯入銀行'] = report_df.loc[final_mask, 'bank_transfer_amount']
         report_df.loc[final_mask, '現金'] = report_df.loc[final_mask, 'cash_amount']
 
-    # ▼▼▼▼▼【程式碼修正處】▼▼▼▼▼
     # 建立一個固定的欄位順序
     # 1. 基本資訊
     core_info = ['employee_id', '員工姓名', '員工編號', 'status']
@@ -101,7 +100,6 @@ def get_salary_report_for_editing(conn, year, month):
     
     # 返回依照指定順序排列的 DataFrame
     return report_df[final_cols_ordered].sort_values(by='員工編號').reset_index(drop=True), item_types
-    # ▲▲▲▲▲【程式碼修正處】▲▲▲▲▲
 
 
 def save_salary_draft(conn, year, month, df: pd.DataFrame):

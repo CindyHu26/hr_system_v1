@@ -196,7 +196,7 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
         earnings = [{'label': '底薪', 'key': '底薪', 'formula': None, 'unit_key': None}, {'label': '加班費(延長工時)', 'key': '加班費', 'formula': f"{base_salary}/30/8*1.34", 'unit_key': '延長工時', 'unit': 'H'}, {'label': '加班費(再延長工時)', 'key': '加班費2', 'formula': f"{base_salary}/30/8*1.67", 'unit_key': '再延長工時', 'unit': 'H'}]
         deductions = [{'label': '勞健保', 'key': '勞健保', 'formula': None, 'unit_key': None}, {'label': '事假', 'key': '事假', 'formula': f'{base_salary}/30', 'unit_key': '事假(時)', 'unit': 'H'}, {'label': '病假', 'key': '病假', 'formula': f'{base_salary}/30/2', 'unit_key': '病假(時)', 'unit': 'H'}, {'label': '遲到', 'key': '遲到', 'formula': f'{base_salary}/30/8/60', 'unit_key': '遲到(分)', 'unit': 'M'}, {'label': '早退', 'key': '早退', 'formula': f'{base_salary}/30/8/60', 'unit_key': '早退(分)', 'unit': 'M'}]
 
-        num_item_rows = 8
+        num_item_rows = 5
         
         table = document.add_table(rows=num_item_rows + 5, cols=6)
         table.style = 'Table Grid'
@@ -260,7 +260,7 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
         table.cell(total_row_2, 3).merge(table.cell(total_row_2, 5))
         set_cell_text(table.cell(total_row_2, 3), f"勞退提撥： {int(emp_row.get('勞退提撥', 0)):,}")
         
-        if (i + 1) % 3 == 0 and i < len(df_basic) - 1:
+        if (i + 1) % 4 == 0 and i < len(df_basic) - 1:
             document.add_page_break()
         else:
             p = document.add_paragraph()
