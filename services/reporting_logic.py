@@ -3,7 +3,7 @@
 此模組包含產生複雜報表的商業邏輯，例如年度薪資總表、二代健保試算等。
 """
 import pandas as pd
-from db import queries_salary_records as q_records
+from db import queries_salary_read as q_read
 from db import queries_salary_base as q_base
 from db import queries_config as q_config
 
@@ -13,7 +13,7 @@ def generate_annual_salary_summary(conn, year: int, item_ids: list):
         return pd.DataFrame(columns=['員工編號', '員工姓名'] + [f'{m}月' for m in range(1, 13)])
 
     # --- 呼叫 q_records 中的函式 ---
-    df = q_records.get_annual_salary_summary_data(conn, year, item_ids)
+    df = q_read.get_annual_salary_summary_data(conn, year, item_ids)
     if df.empty:
         return pd.DataFrame(columns=['員工編號', '員工姓名'] + [f'{m}月' for m in range(1, 13)])
 
@@ -43,8 +43,8 @@ def generate_nhi_employer_summary(conn, year: int):
     results = []
 
     for month in range(1, 13):
-        # --- 呼叫 q_records 中的函式 ---
-        report_df, _ = q_records.get_salary_report_for_editing(conn, year, month)
+        # --- 呼叫 q_read 中的函式 ---
+        report_df, _ = q_read.get_salary_report_for_editing(conn, year, month)
 
         # A. 支付薪資總額
         total_paid_salary = report_df['應付總額'].sum() if '應付總額' in report_df.columns else 0
@@ -60,7 +60,7 @@ def generate_nhi_employer_summary(conn, year: int):
 
         # 計算差額與應繳保費
         diff = total_paid_salary - total_insured_salary
-        premium = round(diff * config.NHI_SUPPLEMENT_RATE) if diff > 0 else 0
+        premium = round(diff * NHI_SUPPLEMENT_RATE) if diff > 0 else 0
 
         results.append({
             '月份': f"{month}月",

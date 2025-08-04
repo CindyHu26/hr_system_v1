@@ -8,7 +8,8 @@ import math
 from db import queries_employee as q_emp
 from db import queries_attendance as q_att
 from db import queries_salary_base as q_base
-from db import queries_salary_records as q_records
+from db import queries_salary_read as q_read
+from db import queries_salary_write as q_write
 from db import queries_insurance as q_ins
 from db import queries_bonus as q_bonus
 from db import queries_performance_bonus as q_perf
@@ -42,7 +43,8 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V29: 修正 hourly_rate 定義順序，並整合老闆/不計薪假邏輯
+    薪資試算引擎 V30:
+    - 【核心修正】在產生草稿時，直接計算總計金額並準備好寫入 salary 主表。
     """
     db_configs = q_config.get_all_configs(conn)
     MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
@@ -75,13 +77,11 @@ def calculate_salary_df(conn, year, month):
         base_salary = base_info['base_salary']
         insurance_salary = base_info['insurance_salary'] or base_salary
 
-        # 規則 1: 如果職稱為'協理'，則只計算底薪，然後跳過所有後續計算
         if emp['title'] == '協理':
             details['底薪'] = int(round(base_salary))
             all_salary_data.append(details)
             continue 
         
-        # 先設定基礎的底薪和時薪，供後續所有項目計算使用
         details['底薪'] = int(round(base_salary))
         hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
 
@@ -165,7 +165,7 @@ def calculate_salary_df(conn, year, month):
 
             if period_to_check:
                 p_year, p_start, p_end = period_to_check["year"], period_to_check["start"], period_to_check["end"]
-                period_bonus, already_deducted = q_records.get_cumulative_bonus_for_period(
+                period_bonus, already_deducted = q_read.get_cumulative_bonus_for_period(
                     conn, emp_id, p_year, p_start, p_end, NHI_BONUS_ITEMS
                 )
                 if period_bonus > 0:
@@ -177,32 +177,51 @@ def calculate_salary_df(conn, year, month):
                         if this_month_premium > 0:
                             details['二代健保(高額獎金)'] = -int(this_month_premium)
         else:
-            earning_cols = [col for col, item_type in item_types.items() if item_type == 'earning']
-            total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols)
+            earning_cols_for_calc = [k for k, t in item_types.items() if t == 'earning']
+            total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols_for_calc)
             if total_earnings_for_part_time > MINIMUM_WAGE_OF_YEAR:
                 part_time_premium = math.ceil(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
                 if part_time_premium > 0:
                     details['二代健保(兼職)'] = -int(part_time_premium)
         
-        # 規則 2: 最後才處理不計薪日的扣款
-        adjusted_base_salary = base_salary
         unpaid_days_df = pd.read_sql_query(f"SELECT date FROM special_unpaid_days WHERE strftime('%Y-%m', date) = '{year}-{month:02d}'", conn)
         unpaid_dates = set(pd.to_datetime(unpaid_days_df['date']).dt.date)
-        # 規則 2: 處理不計薪日的扣款
+
         if emp['title'] != '舍監' and len(unpaid_dates) > 0:
             unpaid_deduction = round(base_salary / 30) * len(unpaid_dates)
-            
-            # 確保扣除後不會低於基本工資
             if (base_salary - unpaid_deduction) < MINIMUM_WAGE_OF_YEAR:
-                adjusted_base_salary = MINIMUM_WAGE_OF_YEAR
+                details['底薪'] = int(round(MINIMUM_WAGE_OF_YEAR))
             else:
-                adjusted_base_salary -= unpaid_deduction
-        
-        details['底薪'] = int(round(adjusted_base_salary))
+                details['底薪'] -= int(round(unpaid_deduction))
 
+        # --- 【核心修正】在迴圈的最後，直接計算總計金額 ---
+        temp_df = pd.DataFrame([details])
+        
+        current_item_types = item_types.copy()
+        if '勞保費' in temp_df.columns: current_item_types['勞保費'] = 'deduction'
+        if '健保費' in temp_df.columns: current_item_types['健保費'] = 'deduction'
+        
+        earning_cols = [c for c, t in current_item_types.items() if t == 'earning' and c in temp_df.columns]
+        deduction_cols = [c for c, t in current_item_types.items() if t == 'deduction' and c in temp_df.columns]
+        
+        total_payable = temp_df[earning_cols].sum(axis=1, numeric_only=True).iloc[0]
+        total_deduction = temp_df[deduction_cols].sum(axis=1, numeric_only=True).iloc[0]
+        net_salary = total_payable + total_deduction
+        
+        bank_transfer_items = ['底薪', '加班費(延長工時)', '加班費(再延長工時)', '勞保費', '健保費', '事假', '病假', '遲到', '早退']
+        bank_transfer_amount = sum(temp_df.get(item, 0).iloc[0] for item in bank_transfer_items)
+        cash_amount = net_salary - bank_transfer_amount
+
+        details['應付總額'] = int(round(total_payable))
+        details['應扣總額'] = int(round(total_deduction))
+        details['實支金額'] = int(round(net_salary))
+        details['匯入銀行'] = int(round(bank_transfer_amount))
+        details['現金'] = int(round(cash_amount))
+        
         all_salary_data.append(details)
         
     return pd.DataFrame(all_salary_data).fillna(0), item_types
+
 
 def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
     report = {"success": 0, "skipped_emp": [], "skipped_item": [], "no_salary_record": []}
@@ -234,7 +253,7 @@ def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file
                     continue
                 final_amount = -abs(float(amount)) if item_info['type'] == 'deduction' else abs(float(amount))
                 data_to_upsert.append((salary_id, item_info['id'], int(final_amount)))
-        if data_to_upsert: report["success"] = q_records.batch_upsert_salary_details(conn, data_to_upsert)
+        if data_to_upsert: report["success"] = q_write.batch_upsert_salary_details(conn, data_to_upsert)
         report["skipped_emp"] = list(set(report["skipped_emp"]))
         report["skipped_item"] = list(set(report["skipped_item"]))
         return report

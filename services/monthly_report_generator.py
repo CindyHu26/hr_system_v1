@@ -12,14 +12,14 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 # 引用相關的資料庫查詢模組
-from db import queries_salary_records as q_records
+from db import queries_salary_read as q_read
 from db import queries_employee as q_emp
 from db import queries_insurance as q_ins
 from db import queries_attendance as q_att
 
 # --- 核心函式：獲取報表基礎資料 ---
 def _get_monthly_salary_data(conn, year, month):
-    report_df, item_types = q_records.get_salary_report_for_editing(conn, year, month)
+    report_df, item_types = q_read.get_salary_report_for_editing(conn, year, month)
     final_df = report_df[report_df['status'] == 'final'].copy()
     
     if final_df.empty:

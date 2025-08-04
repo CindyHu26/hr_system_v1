@@ -4,9 +4,11 @@ import pandas as pd
 from datetime import datetime
 import traceback
 from dateutil.relativedelta import relativedelta
+import time
 
 from services import salary_logic as logic_salary
-from db import queries_salary_records as q_records
+from db import queries_salary_read as q_read
+from db import queries_salary_write as q_write
 from db import queries_employee as q_emp
 from db import queries_salary_items as q_items
 
@@ -21,7 +23,7 @@ def show_page(conn):
 
     st.write("---")
 
-    final_records_exist = q_records.check_if_final_records_exist(conn, year, month)
+    final_records_exist = q_read.check_if_final_records_exist(conn, year, month)
 
     action_c1, action_c2 = st.columns(2)
 
@@ -31,7 +33,7 @@ def show_page(conn):
                 try:
                     new_draft_df, _ = logic_salary.calculate_salary_df(conn, year, month)
                     if not new_draft_df.empty:
-                        q_records.save_salary_draft(conn, year, month, new_draft_df)
+                        q_write.save_salary_draft(conn, year, month, new_draft_df)
                         st.success("新草稿已計算並儲存！請點擊右側按鈕讀取以查看。")
                         if 'salary_report_df' in st.session_state:
                              del st.session_state['salary_report_df']
@@ -48,7 +50,7 @@ def show_page(conn):
     with action_c2:
         if st.button("🔄 讀取已儲存的薪資資料", type="primary"):
             with st.spinner("正在從資料庫讀取薪資報表..."):
-                report_df, item_types = q_records.get_salary_report_for_editing(conn, year, month)
+                report_df, item_types = q_read.get_salary_report_for_editing(conn, year, month)
                 st.session_state.salary_report_df = report_df
                 st.session_state.salary_item_types = item_types
                 if report_df.empty:
@@ -82,14 +84,14 @@ def show_page(conn):
         if not employees_in_draft.empty:
             emp_options = dict(zip(employees_in_draft['name_ch'], employees_in_draft['id']))
             item_options = dict(zip(all_items_df['name'], all_items_df['id']))
-            item_types = dict(zip(all_items_df['name'], all_items_df['type']))
+            item_types_map = dict(zip(all_items_df['name'], all_items_df['type']))
 
             with st.form("single_item_adjustment_form"):
-                st.write("此操作會直接更新資料庫中的草稿數字，完成後上方的總覽表格將會自動刷新。")
+                st.write("此操作會直接更新資料庫，完成後上方的總覽表格將會自動刷新。")
                 c1, c2, c3 = st.columns(3)
                 
-                selected_emp_name = c1.selectbox("選擇員工*", options=emp_options.keys())
-                selected_item_name = c2.selectbox("選擇薪資項目*", options=item_options.keys())
+                selected_emp_name = c1.selectbox("選擇員工*", options=list(emp_options.keys()))
+                selected_item_name = c2.selectbox("選擇薪資項目*", options=list(item_options.keys()))
                 amount = c3.number_input("輸入金額*", step=1.0)
                 
                 submitted = st.form_submit_button("確認調整")
@@ -100,7 +102,7 @@ def show_page(conn):
                             try:
                                 emp_id = emp_options[selected_emp_name]
                                 item_id = item_options[selected_item_name]
-                                item_type = item_types[selected_item_name]
+                                item_type = item_types_map[selected_item_name]
                                 
                                 final_amount = -abs(amount) if item_type == 'deduction' else abs(amount)
                                 if amount == 0:
@@ -113,22 +115,20 @@ def show_page(conn):
                                 else:
                                     salary_id = salary_main_df['id'].iloc[0]
                                     data_to_upsert = [(salary_id, item_id, int(final_amount))]
-                                    q_records.batch_upsert_salary_details(conn, data_to_upsert)
+                                    q_write.batch_upsert_salary_details(conn, data_to_upsert)
                                     
                                     # 儲存成功後，立刻重新從資料庫載入最新的薪資單資料
-                                    report_df, item_types_refreshed = q_records.get_salary_report_for_editing(conn, year, month)
+                                    report_df, item_types_refreshed = q_read.get_salary_report_for_editing(conn, year, month)
                                     st.session_state.salary_report_df = report_df
                                     st.session_state.salary_item_types = item_types_refreshed
                                     
                                     st.success(f"成功調整！總覽表格已刷新。")
-                                    # 短暫延遲讓使用者看到成功訊息
-                                    import time
-                                    time.sleep(1)
-                                    # 使用 st.rerun() 來重新渲染整個頁面，確保 data_editor 也能顯示新資料
+                                    time.sleep(0.5)
                                     st.rerun()
 
                             except Exception as e:
                                 st.error(f"調整時發生錯誤: {e}")
+                                st.code(traceback.format_exc())
                     else:
                         st.warning("請務必選擇員工和薪資項目。")
         else:
@@ -142,7 +142,7 @@ def show_page(conn):
         draft_to_save = edited_df[edited_df['status'] == 'draft']
         if st.button("💾 儲存 data_editor 的變更", disabled=draft_to_save.empty):
             with st.spinner("正在儲存草稿..."):
-                q_records.save_salary_draft(conn, year, month, draft_to_save)
+                q_write.save_salary_draft(conn, year, month, draft_to_save)
                 st.success("草稿已成功儲存！")
                 st.rerun()
 
@@ -150,7 +150,7 @@ def show_page(conn):
         draft_to_finalize = edited_df[edited_df['status'] == 'draft']
         if st.button("🔒 儲存並鎖定最終版本", type="primary", disabled=draft_to_finalize.empty):
             with st.spinner("正在寫入並鎖定最終薪資單..."):
-                q_records.finalize_salary_records(conn, year, month, draft_to_finalize)
+                q_write.finalize_salary_records(conn, year, month, draft_to_finalize)
                 st.success(f"{year}年{month}月的薪資單已成功定版！")
                 st.rerun()
 
@@ -169,7 +169,7 @@ def show_page(conn):
                     st.warning("請至少選擇一位要解鎖的員工。")
                 else:
                     ids_to_unlock = final_records[final_records['員工姓名'].isin(to_unlock)]['id'].tolist()
-                    count = q_records.revert_salary_to_draft(conn, year, month, ids_to_unlock)
+                    count = q_write.revert_salary_to_draft(conn, year, month, ids_to_unlock)
                     st.success(f"成功解鎖 {count} 筆紀錄！請重新讀取資料。")
                     if 'salary_report_df' in st.session_state:
                          del st.session_state['salary_report_df']

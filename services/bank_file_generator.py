@@ -6,7 +6,7 @@ from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # 匯入產生薪資總表所需的所有相關查詢模組
-from db import queries_salary_records as q_records
+from db import queries_salary_read as q_read
 from db import queries_employee as q_emp
 from db import queries_insurance as q_ins
 
@@ -16,7 +16,7 @@ def generate_bank_transfer_xlsx_files(conn, year: int, month: int):
     (V6: 改為產製 XLSX 格式，確保銀行帳號等文字格式正確)
     """
     # --- 步驟 1: 獲取與薪資報表完全相同的基礎資料 ---
-    report_df, _ = q_records.get_salary_report_for_editing(conn, year, month)
+    report_df, _ = q_read.get_salary_report_for_editing(conn, year, month)
 
     # --- 步驟 2: 篩選出需要處理的紀錄 ---
     final_df = report_df[(report_df['status'] == 'final') & (report_df['匯入銀行'] > 0)].copy()
