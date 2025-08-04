@@ -59,7 +59,7 @@ PAGES_SALARY = {
     "2️⃣ 績效獎金計算": performance_bonus,
     "3️⃣ 業務獎金批次匯入": bonus_batch,
     "4️⃣ 借支管理": loan_management,
-"    5️⃣ 薪資單產生與鎖定": salary_calculation, 
+    "5️⃣ 薪資單產生與鎖定": salary_calculation, 
     "➕ 員工常態薪資項設定": allowance_setting,
     "🏦 勞健保級距管理": insurance_grade_management,
     "🔧 系統參數設定": config_management,
