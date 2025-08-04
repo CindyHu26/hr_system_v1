@@ -31,11 +31,17 @@ def show_page(conn):
     
     df_raw = q_emp.get_all_employees(conn)
 
-    tab1, tab2, tab3 = st.tabs([" 總覽與編輯", " ✨ 新增員工", "🚀 批次匯入 (Excel)"])
+    # 將頁面組織成不同的頁籤
+    tab1, tab2, tab3 = st.tabs([" 總覽與快速編輯", " ✨ 資料操作 (新增/修改/刪除)", "🚀 批次匯入 (Excel)"])
 
+    # --- TAB 1: 總覽與 Data Editor ---
     with tab1:
         st.subheader("員工資料總覽")
         try:
+            df_raw = q_emp.get_all_employees(conn)
+            if 'employee_df_raw' not in st.session_state:
+                st.session_state.employee_df_raw = df_raw.copy()
+
             df_processed = df_raw.copy()
             date_cols = ['entry_date', 'birth_date', 'arrival_date', 'resign_date', 'nhi_status_expiry']
             for col in date_cols:
@@ -56,14 +62,14 @@ def show_page(conn):
                     "首次抵台日": st.column_config.DateColumn("首次抵台日", format="YYYY-MM-DD"),
                     "離職日": st.column_config.DateColumn("離職日", format="YYYY-MM-DD"),
                     "狀態效期": st.column_config.DateColumn("狀態效期", format="YYYY-MM-DD"),
-                    "性別": st.column_config.SelectboxColumn("性別", options=["男", "女"]),
+                    "性別": st.column_config.SelectboxColumn("性別", options=["男", "女", ""]),
                     "國籍": st.column_config.SelectboxColumn("國籍", options=list(NATIONALITY_MAP.keys())),
                     "健保狀態": st.column_config.SelectboxColumn("健保狀態", options=["一般", "低收入戶", "自理"]),
                 },
                 disabled=["系統ID", "員工編號", "身份證號"]
             )
 
-            if st.button("💾 儲存員工資料變更", type="primary"):
+            if st.button("💾 儲存表格變更", type="primary"):
                 original_df_renamed = st.session_state.original_employee_df.rename(columns=COLUMN_MAP)
                 changes = edited_df.compare(original_df_renamed)
                 if changes.empty:
@@ -80,36 +86,22 @@ def show_page(conn):
                             update_data_reverted = {(k for k, v in COLUMN_MAP.items() if v == col_name).__next__(): val for col_name, val in update_data_raw.items()}
                             if 'nationality' in update_data_reverted:
                                 update_data_reverted['nationality'] = NATIONALITY_MAP.get(update_data_reverted['nationality'], 'TW')
+                            
                             cleaned_update_data = {}
                             for key, value in update_data_reverted.items():
-                                if pd.isna(value): cleaned_update_data[key] = None
-                                elif isinstance(value, (pd.Timestamp, date)): cleaned_update_data[key] = value.strftime('%Y-%m-%d')
-                                else: cleaned_update_data[key] = value
+                                if pd.isna(value) or value == '':
+                                    cleaned_update_data[key] = None
+                                elif isinstance(value, (pd.Timestamp, date)):
+                                    cleaned_update_data[key] = value.strftime('%Y-%m-%d')
+                                else:
+                                    cleaned_update_data[key] = value
+
                             q_common.update_record(conn, 'employee', record_id, cleaned_update_data)
                             updates_count += 1
                     st.success(f"成功更新了 {updates_count} 位員工的資料！")
                     del st.session_state.original_employee_df
+                    del st.session_state.employee_df_raw
                     st.rerun()
-            
-            st.markdown("---")
-            with st.expander("🗑️ 刪除員工"):
-                st.warning("注意：刪除員工將會一併刪除與其相關的所有紀錄（如薪資單、出勤等），此操作無法復原！")
-                emp_options = {f"{row['name_ch']} ({row['hr_code']})": row['id'] for _, row in df_raw.iterrows()}
-                selected_emp_to_delete = st.selectbox("選擇要刪除的員工", options=emp_options.keys(), index=None)
-                
-                if st.button("🔴 確認刪除所選員工", type="primary"):
-                    if selected_emp_to_delete:
-                        emp_id_to_delete = emp_options[selected_emp_to_delete]
-                        try:
-                            q_common.delete_record(conn, 'employee', emp_id_to_delete)
-                            st.success(f"已成功刪除員工：{selected_emp_to_delete}")
-                            if 'original_employee_df' in st.session_state:
-                                del st.session_state.original_employee_df
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"刪除失敗：{e}")
-                    else:
-                        st.warning("請先選擇一位要刪除的員工。")
 
         except Exception as e:
             st.error(f"讀取或處理員工資料時發生錯誤: {e}")
@@ -167,6 +159,91 @@ def show_page(conn):
                         st.error("新增失敗：員工編號或身分證號可能已存在。")
                     except Exception as e:
                         st.error(f"發生未知錯誤：{e}")
+
+        st.markdown("---")
+        
+        with st.expander("✏️ 修改或刪除員工 (單筆操作)", expanded=False):
+            df_for_selection = st.session_state.get('employee_df_raw', pd.DataFrame())
+            if not df_for_selection.empty:
+                emp_options = {f"{row['name_ch']} ({row['hr_code']})": row['id'] for _, row in df_for_selection.iterrows()}
+                selected_emp_key = st.selectbox("選擇要操作的員工", options=emp_options.keys(), index=None, placeholder="請選擇...")
+                
+                if selected_emp_key:
+                    emp_id = emp_options[selected_emp_key]
+                    record_data = q_common.get_by_id(conn, 'employee', emp_id)
+
+                    with st.form(f"edit_employee_form_{emp_id}"):
+                        st.write(f"**正在編輯**: {record_data['name_ch']} ({record_data['hr_code']})")
+                        
+                        st.markdown("##### 基本資料")
+                        c1, c2, c3 = st.columns(3)
+                        name_ch_edit = c1.text_input("姓名*", value=record_data.get('name_ch', ''))
+                        hr_code_edit = c2.text_input("員工編號*", value=record_data.get('hr_code', ''), disabled=True)
+                        id_no_edit = c3.text_input("身分證號*", value=record_data.get('id_no', ''), disabled=True)
+
+                        st.markdown("##### 職務資料")
+                        c4, c5, c6 = st.columns(3)
+                        dept_edit = c4.text_input("部門", value=record_data.get('dept', '') or '')
+                        title_edit = c5.text_input("職稱", value=record_data.get('title', '') or '')
+                        gender_options = ["", "男", "女"]
+                        gender_index = gender_options.index(record_data.get('gender', '')) if record_data.get('gender') in gender_options else 0
+                        gender_edit = c6.selectbox("性別", options=gender_options, index=gender_index)
+                        
+                        st.markdown("##### 個人與日期資料")
+                        c7, c8, c9 = st.columns(3)
+                        nationality_ch_edit = c7.selectbox("國籍", list(NATIONALITY_MAP.keys()), index=list(NATIONALITY_MAP_REVERSE.keys()).index(record_data.get('nationality', 'TW')))
+                        birth_date_edit = c8.date_input("生日", value=to_date(record_data.get('birth_date')))
+                        entry_date_edit = c9.date_input("到職日", value=to_date(record_data.get('entry_date')))
+                        
+                        st.markdown("---")
+                        st.markdown("##### 聯絡資訊")
+                        c10, c11 = st.columns(2)
+                        phone_edit = c10.text_input("電話", value=record_data.get('phone', '') or '')
+                        bank_account_edit = c11.text_input("銀行帳號", value=record_data.get('bank_account', '') or '')
+                        address_edit = st.text_input("地址", value=record_data.get('address', '') or '')
+
+                        st.markdown("---")
+                        st.markdown("##### 特殊身份與日期")
+                        c12, c13 = st.columns(2)
+                        arrival_date_edit = c12.date_input("首次抵台日期", value=to_date(record_data.get('arrival_date')))
+                        resign_date_edit = c13.date_input("離職日", value=to_date(record_data.get('resign_date')))
+                        
+                        st.markdown("---")
+                        st.markdown("##### 健保相關設定")
+                        c14, c15 = st.columns(2)
+                        nhi_status_options = ["一般", "低收入戶", "自理"]
+                        nhi_status_index = nhi_status_options.index(record_data.get('nhi_status', '一般'))
+                        nhi_status_edit = c14.selectbox("健保狀態", options=nhi_status_options, index=nhi_status_index)
+                        nhi_status_expiry_edit = c15.date_input("狀態效期", value=to_date(record_data.get('nhi_status_expiry')))
+                        
+                        note_edit = st.text_area("備註", value=record_data.get('note', '') or '')
+
+                        col_update, col_delete = st.columns(2)
+                        if col_update.form_submit_button("儲存變更", use_container_width=True):
+                            updated_data = {
+                                'name_ch': name_ch_edit, 'dept': dept_edit, 'title': title_edit, 'gender': gender_edit,
+                                'nationality': NATIONALITY_MAP.get(nationality_ch_edit, 'TW'),
+                                'birth_date': birth_date_edit, 'entry_date': entry_date_edit,
+                                'phone': phone_edit, 'bank_account': bank_account_edit, 'address': address_edit,
+                                'arrival_date': arrival_date_edit, 'resign_date': resign_date_edit,
+                                'nhi_status': nhi_status_edit, 'nhi_status_expiry': nhi_status_expiry_edit,
+                                'note': note_edit
+                            }
+                            cleaned_data = {k: (v.strftime('%Y-%m-%d') if isinstance(v, date) else (v if v != '' else None)) for k, v in updated_data.items()}
+                            q_common.update_record(conn, 'employee', emp_id, cleaned_data)
+                            st.success(f"員工 {name_ch_edit} 的資料已更新！")
+                            st.rerun()
+
+                        if col_delete.form_submit_button("🔴 刪除此員工", type="primary", use_container_width=True):
+                            try:
+                                q_common.delete_record(conn, 'employee', emp_id)
+                                st.warning(f"員工 '{selected_emp_key}' 已被刪除！")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"刪除失敗，請檢查是否有相關薪資或出勤紀錄。")
+
+            else:
+                st.info("目前沒有可供操作的員工紀錄。")
 
     with tab3:
         create_batch_import_section(
