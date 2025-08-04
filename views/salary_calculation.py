@@ -23,7 +23,6 @@ def show_page(conn):
 
     st.write("---")
 
-    # 在 session_state 中初始化，避免每次都重新讀取
     session_key = f"salary_report_{year}_{month}"
     if session_key not in st.session_state:
         st.session_state[session_key] = {'df': pd.DataFrame(), 'types': {}}
@@ -33,13 +32,16 @@ def show_page(conn):
     action_c1, action_c2 = st.columns(2)
 
     with action_c1:
-        if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會根據最新的出勤、假單等資料重新計算，並覆蓋現有草稿。", disabled=final_records_exist):
-            with st.spinner("正在根據最新資料計算全新草稿..."):
+        if st.button("🚀 產生/覆蓋薪資草稿", help="此操作會先清除本月所有現有草稿，再根據最新資料重新計算。", disabled=final_records_exist):
+            with st.spinner("正在清除舊草稿並計算全新草稿..."):
                 try:
+                    # 【核心修正】在計算前，先呼叫新的函式來刪除舊草稿
+                    deleted_count = q_write.delete_salary_drafts(conn, year, month)
+                    st.toast(f"已清除 {deleted_count} 筆舊草稿紀錄。")
+
                     new_draft_df, item_types = logic_salary.calculate_salary_df(conn, year, month)
                     if not new_draft_df.empty:
                         q_write.save_salary_draft(conn, year, month, new_draft_df)
-                        # 直接將新產生的資料存入 session state
                         st.session_state[session_key] = {'df': new_draft_df, 'types': item_types}
                         st.success("新草稿已計算並儲存！表格已更新。")
                         time.sleep(0.5)
@@ -62,7 +64,6 @@ def show_page(conn):
                     st.info("資料庫中沒有本月的薪資紀錄，您可以點擊左側按鈕產生新草稿。")
                 st.rerun()
 
-    # 從 session state 讀取資料
     df_to_edit = st.session_state[session_key]['df']
 
     if df_to_edit.empty:
@@ -77,20 +78,18 @@ def show_page(conn):
     edited_df = st.data_editor(
         df_to_edit.style.apply(lambda row: ['background-color: #f0f2f6'] * len(row) if row.status == 'final' else [''] * len(row), axis=1),
         use_container_width=True,
-        key=f"salary_editor_{year}_{month}" # 使用年月作為 key，確保切換月份時編輯器會刷新
+        key=f"salary_editor_{year}_{month}"
     )
 
-    # --- 主要按鈕區 ---
     btn_c1, btn_c2 = st.columns(2)
 
     with btn_c1:
-        # 【核心修改】重新加回 data_editor 的儲存按鈕
         if st.button("💾 儲存表格中的變更", help="儲存您在上方表格中對『草稿』狀態紀錄的所有修改。"):
             draft_to_save = edited_df[edited_df['status'] == 'draft']
             if not draft_to_save.empty:
                 with st.spinner("正在儲存草稿..."):
+                    # 這裡的 save_salary_draft 已經包含了總額重算，所以是安全的
                     q_write.save_salary_draft(conn, year, month, draft_to_save)
-                    # 重新讀取以確保資料同步
                     report_df, item_types = q_read.get_salary_report_for_editing(conn, year, month)
                     st.session_state[session_key] = {'df': report_df, 'types': item_types}
                     st.success("草稿已成功儲存！")
@@ -105,15 +104,12 @@ def show_page(conn):
         if st.button("🔒 儲存並鎖定最終版本", type="primary", disabled=draft_to_finalize.empty):
             with st.spinner("正在寫入並鎖定最終薪資單..."):
                 q_write.finalize_salary_records(conn, year, month, draft_to_finalize)
-                # 清除舊的 session state
                 if session_key in st.session_state:
                     del st.session_state[session_key]
                 st.success(f"{year}年{month}月的薪資單已成功定版！")
                 st.rerun()
 
-    # --- 單筆調整區塊 ---
     with st.expander("✏️ 單筆手動調整 (會直接影響草稿)"):
-        # 邏輯與之前相同，但確保最後會刷新 session state
         all_employees = q_emp.get_all_employees(conn)
         all_items_df = q_items.get_all_salary_items(conn, active_only=True)
         draft_emp_names = edited_df[edited_df['status'] == 'draft']['員工姓名'].unique()
@@ -146,7 +142,6 @@ def show_page(conn):
                                     salary_id = salary_id_result[0]
                                     q_write.batch_upsert_salary_details(conn, [(salary_id, item_id, int(amount))])
                                     
-                                    # 重新讀取並覆蓋 session state
                                     report_df, item_types = q_read.get_salary_report_for_editing(conn, year, month)
                                     st.session_state[session_key] = {'df': report_df, 'types': item_types}
                                     
@@ -160,7 +155,6 @@ def show_page(conn):
             st.info("目前沒有狀態為「草稿」的紀錄可供單筆調整。")
 
 
-    # --- 解鎖區塊 ---
     with st.expander("⚠️ 進階操作 (解鎖)"):
         final_records = edited_df[edited_df['status'] == 'final']
         if not final_records.empty:

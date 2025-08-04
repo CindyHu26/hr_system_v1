@@ -40,9 +40,8 @@ def calculate_single_employee_insurance(conn, insurance_salary, dependents_under
 
 def calculate_salary_df(conn, year, month):
     """
-    薪資試算引擎 V32:
-    - 呼叫 q_allow.get_employee_recurring_items 時傳入 year 和 month，
-      以確保只抓取最新的有效常態薪資項目。
+    薪資試算引擎 V34:
+    - 【核心修正】調整計算順序：優先設定常態項目，再疊加單次調整，徹底避免金額覆蓋或累加問題。
     """
     db_configs = q_config.get_all_configs(conn)
     MINIMUM_WAGE_OF_YEAR = q_config.get_minimum_wage_for_year(conn, year)
@@ -63,6 +62,9 @@ def calculate_salary_df(conn, year, month):
     
     monthly_attendance = q_att.get_monthly_attendance_summary(conn, year, month)
     item_types = pd.read_sql("SELECT name, type FROM salary_item", conn).set_index('name')['type'].to_dict()
+    
+    # 預先載入當月的單次調整紀錄
+    monthly_adjustments = q_allow.get_monthly_adjustments(conn, year, month)
 
     all_salary_data = []
 
@@ -83,6 +85,24 @@ def calculate_salary_df(conn, year, month):
         details['底薪'] = int(round(base_salary))
         hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
 
+        # 1. 優先設定常態薪資項目 (直接賦值)
+        for item in q_allow.get_employee_recurring_items(conn, emp_id, year, month):
+            details[item['name']] = -abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount'])
+
+        # 2. 疊加單次薪資項目調整 (累加)
+        emp_adjustments = monthly_adjustments[monthly_adjustments['員工姓名'] == emp_name]
+        for _, adj_row in emp_adjustments.iterrows():
+            item_name = adj_row['項目名稱']
+            amount = adj_row['金額']
+            item_type = adj_row['類型']
+            # 使用累加的方式，避免覆蓋掉可能已存在的常態設定
+            current_val = details.get(item_name, 0)
+            if item_type == 'deduction':
+                details[item_name] = current_val - abs(amount)
+            else:
+                details[item_name] = current_val + abs(amount)
+
+        # 3. 繼續計算其他項目
         if emp['dept'] in ['服務', '行政']:
             entry_date_str = emp['entry_date']
             if pd.notna(entry_date_str):
@@ -109,10 +129,6 @@ def calculate_salary_df(conn, year, month):
             if hours > 0:
                 if leave_type == '事假': details['事假'] = -int(round(hours * hourly_rate))
                 elif leave_type == '病假': details['病假'] = -int(round(hours * hourly_rate * 0.5))
-
-        # 【核心修正】呼叫函式時傳入 year 和 month
-        for item in q_allow.get_employee_recurring_items(conn, emp_id, year, month):
-            details[item['name']] = details.get(item['name'], 0) + (-abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount']))
 
         is_insured_in_company = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
 
@@ -141,7 +157,7 @@ def calculate_salary_df(conn, year, month):
                 details['稅款'] = -int(round(insurance_salary * tax_rate))
         
         special_ot_pay = overtime_logic.calculate_special_overtime_pay(conn, emp_id, year, month, hourly_rate)
-        if special_ot_pay > 0: details['津貼加班'] = special_ot_pay
+        if special_ot_pay > 0: details['津貼加班'] = details.get('津貼加班', 0) + special_ot_pay
         
         loan_amount = q_loan.get_employee_loan(conn, emp_id, year, month)
         if loan_amount > 0:
@@ -193,7 +209,7 @@ def calculate_salary_df(conn, year, month):
             else:
                 details['底薪'] -= int(round(unpaid_deduction))
 
-        # --- 在迴圈的最後，直接計算總計金額 ---
+        # --- 最終加總 ---
         temp_df = pd.DataFrame([details])
         
         current_item_types = item_types.copy()
@@ -224,15 +240,13 @@ def calculate_salary_df(conn, year, month):
     if not final_df.empty:
         final_df['status'] = 'draft'
         final_df['勞健保'] = pd.to_numeric(final_df.get('勞保費', 0), errors='coerce').fillna(0) + pd.to_numeric(final_df.get('健保費', 0), errors='coerce').fillna(0)
-        # 確保與 get_salary_report_for_editing 的欄位順序和類型一致
-        report_template, _ = q_read.get_salary_report_for_editing(conn, 2000, 1) # 借用一個模板
+        report_template, _ = q_read.get_salary_report_for_editing(conn, 2000, 1)
         final_cols = report_template.columns.tolist()
 
         for col in final_cols:
             if col not in final_df.columns:
                 final_df[col] = 0 if col not in ['status', '備註', '員工姓名', '員工編號'] else ''
         
-        # 轉換資料類型以匹配
         for col in final_df.columns:
             if col in report_template.columns and report_template[col].dtype != final_df[col].dtype:
                 if pd.api.types.is_numeric_dtype(report_template[col]):
@@ -241,41 +255,3 @@ def calculate_salary_df(conn, year, month):
         return final_df[final_cols], item_types
 
     return pd.DataFrame(), item_types
-
-
-def process_batch_salary_update_excel(conn, year: int, month: int, uploaded_file):
-    report = {"success": 0, "skipped_emp": [], "skipped_item": [], "no_salary_record": []}
-    try:
-        df = pd.read_excel(uploaded_file)
-        if '員工姓名' not in df.columns: raise ValueError("Excel 檔案中缺少 '員工姓名' 欄位。")
-        emp_map = pd.read_sql("SELECT id, name_ch FROM employee", conn).set_index('name_ch')['id'].to_dict()
-        item_map_df = pd.read_sql("SELECT id, name, type FROM salary_item", conn)
-        item_map = {row['name']: {'id': row['id'], 'type': row['type']} for _, row in item_map_df.iterrows()}
-        salary_main_df = pd.read_sql("SELECT id, employee_id FROM salary WHERE year = ? AND month = ?", conn, params=(year, month))
-        salary_id_map = salary_main_df.set_index('employee_id')['id'].to_dict()
-        data_to_upsert = []
-        for _, row in df.iterrows():
-            emp_name = row.get('員工姓名')
-            if pd.isna(emp_name): continue
-            emp_id = emp_map.get(emp_name)
-            if not emp_id:
-                report["skipped_emp"].append(emp_name)
-                continue
-            salary_id = salary_id_map.get(emp_id)
-            if not salary_id:
-                report["no_salary_record"].append(emp_name)
-                continue
-            for item_name, amount in row.items():
-                if item_name == '員工姓名' or pd.isna(amount): continue
-                item_info = item_map.get(item_name)
-                if not item_info:
-                    report["skipped_item"].append(item_name)
-                    continue
-                final_amount = -abs(float(amount)) if item_info['type'] == 'deduction' else abs(float(amount))
-                data_to_upsert.append((salary_id, item_info['id'], int(final_amount)))
-        if data_to_upsert: report["success"] = q_write.batch_upsert_salary_details(conn, data_to_upsert)
-        report["skipped_emp"] = list(set(report["skipped_emp"]))
-        report["skipped_item"] = list(set(report["skipped_item"]))
-        return report
-    except Exception as e:
-        raise e

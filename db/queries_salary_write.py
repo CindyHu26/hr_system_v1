@@ -4,6 +4,18 @@
 """
 import pandas as pd
 
+def delete_salary_drafts(conn, year: int, month: int):
+    """
+    【全新函式】
+    刪除指定月份所有狀態為 'draft' 的薪資主紀錄。
+    由於 schema 中設定了 ON DELETE CASCADE，相關的 salary_detail 也會被一併刪除。
+    """
+    cursor = conn.cursor()
+    sql = "DELETE FROM salary WHERE year = ? AND month = ? AND status = 'draft'"
+    cursor.execute(sql, (year, month))
+    conn.commit()
+    return cursor.rowcount
+
 def _recalculate_and_save_salary_summaries(conn, salary_ids: list):
     """
     【V3 - 修正版】
@@ -81,27 +93,28 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
             emp_id = emp_map.get(row['員工姓名'])
             if not emp_id: continue
 
-            # 這裡不儲存來自 data editor 的總額，因為它們是舊的
-            # 總額將由 _recalculate_and_save_salary_summaries 函式重新計算
             pension = row.get('勞退提撥', 0); pension = 0 if pd.isna(pension) else int(pension)
             note = row.get('備註', ''); note = '' if pd.isna(note) else note
+            payable = row.get('應付總額', 0); payable = 0 if pd.isna(payable) else int(payable)
+            deduction = row.get('應扣總額', 0); deduction = 0 if pd.isna(deduction) else int(deduction)
+            net = row.get('實支金額', 0); net = 0 if pd.isna(net) else int(net)
+            bank = row.get('匯入銀行', 0); bank = 0 if pd.isna(bank) else int(bank)
+            cash = row.get('現金', 0); cash = 0 if pd.isna(cash) else int(cash)
 
-            # 插入或更新 salary 主紀錄，但先不更新總額相關欄位
+
             cursor.execute("""
-                INSERT INTO salary (employee_id, year, month, status, employer_pension_contribution, note)
-                VALUES (?, ?, ?, 'draft', ?, ?)
+                INSERT INTO salary (employee_id, year, month, status, employer_pension_contribution, note, total_payable, total_deduction, net_salary, bank_transfer_amount, cash_amount)
+                VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(employee_id, year, month)
-                DO UPDATE SET status = 'draft', employer_pension_contribution = excluded.employer_pension_contribution, note = excluded.note
+                DO UPDATE SET status = 'draft', employer_pension_contribution = excluded.employer_pension_contribution, note = excluded.note,
+                               total_payable = excluded.total_payable, total_deduction = excluded.total_deduction, net_salary = excluded.net_salary,
+                               bank_transfer_amount = excluded.bank_transfer_amount, cash_amount = excluded.cash_amount
                 WHERE status != 'final'
-            """, (emp_id, year, month, pension, note))
-            
+            """, (emp_id, year, month, pension, note, payable, deduction, net, bank, cash))
+
             salary_id_result = cursor.execute("SELECT id FROM salary WHERE employee_id = ? AND year = ? AND month = ?", (emp_id, year, month)).fetchone()
             if not salary_id_result: continue
             salary_id = salary_id_result[0]
-            
-            # 將 salary_id 加入待更新列表
-            if salary_id not in affected_salary_ids:
-                affected_salary_ids.append(salary_id)
             
             # 刪除舊的薪資明細
             cursor.execute("DELETE FROM salary_detail WHERE salary_id = ?", (salary_id,))
@@ -115,9 +128,6 @@ def save_salary_draft(conn, year, month, df: pd.DataFrame):
             if details_to_insert:
                 cursor.executemany("INSERT INTO salary_detail (salary_id, salary_item_id, amount) VALUES (?, ?, ?)", details_to_insert)
         
-        if affected_salary_ids:
-            _recalculate_and_save_salary_summaries(conn, affected_salary_ids)
-
         conn.commit()
     except Exception as e:
         conn.rollback()

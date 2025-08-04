@@ -7,7 +7,7 @@ import pandas as pd
 def get_employee_recurring_items(conn, emp_id, year, month):
     """
     查詢單一員工在指定月份有效的常態薪資設定。
-    【修正版】: 使用 ROW_NUMBER() 確保每個薪資項目只取回最新的一筆有效紀錄。
+    【V2 修正版】: 使用 strftime 強化日期比較與排序的穩定性，確保永遠抓取到最新紀錄。
     """
     from utils.helpers import get_monthly_dates
     month_start, month_end = get_monthly_dates(year, month)
@@ -17,12 +17,12 @@ def get_employee_recurring_items(conn, emp_id, year, month):
             si.name,
             esi.amount,
             si.type,
-            ROW_NUMBER() OVER(PARTITION BY esi.salary_item_id ORDER BY esi.start_date DESC) as rn
+            ROW_NUMBER() OVER(PARTITION BY esi.salary_item_id ORDER BY strftime('%Y-%m-%d', esi.start_date) DESC) as rn
         FROM employee_salary_item esi
         JOIN salary_item si ON esi.salary_item_id = si.id
         WHERE esi.employee_id = ?
-          AND date(esi.start_date) <= date(?)
-          AND (esi.end_date IS NULL OR esi.end_date = '' OR date(esi.end_date) >= date(?))
+          AND strftime('%Y-%m-%d', esi.start_date) <= strftime('%Y-%m-%d', ?)
+          AND (esi.end_date IS NULL OR esi.end_date = '' OR strftime('%Y-%m-%d', esi.end_date) >= strftime('%Y-%m-%d', ?))
     )
     SELECT name, amount, type
     FROM RankedItems
@@ -47,7 +47,7 @@ def get_all_employee_salary_items(conn):
     FROM employee_salary_item esi 
     JOIN employee e ON esi.employee_id = e.id 
     JOIN salary_item si ON esi.salary_item_id = si.id 
-    ORDER BY e.name_ch, si.name
+    ORDER BY e.hr_code, esi.start_date DESC
     """
     return pd.read_sql_query(query, conn)
 
@@ -67,7 +67,6 @@ def get_settings_grouped_by_amount(conn, salary_item_id):
     df = pd.read_sql_query(query, conn, params=(int(salary_item_id),))
     if df.empty:
         return {}
-    # 將查詢結果處理成 {金額: [員工列表]} 的字典格式
     return {
         amount: group[['employee_id', 'name_ch']].to_dict('records') 
         for amount, group in df.groupby('amount')
@@ -80,6 +79,7 @@ def batch_add_or_update_employee_salary_items(conn, employee_ids, salary_item_id
         cursor.execute("BEGIN TRANSACTION")
         
         placeholders = ','.join('?' for _ in employee_ids)
+        # 修正：刪除時應該只考慮 employee_id 和 salary_item_id，而不是所有日期
         cursor.execute(f"DELETE FROM employee_salary_item WHERE salary_item_id = ? AND employee_id IN ({placeholders})", [salary_item_id] + employee_ids)
         
         data_tuples = [(emp_id, salary_item_id, amount, start_date, end_date, note) for emp_id in employee_ids]
@@ -96,7 +96,6 @@ def batch_upsert_allowances(conn, df: pd.DataFrame):
     cursor = conn.cursor()
     report = {'inserted': 0, 'updated': 0, 'failed': 0, 'errors': []}
     
-    # 預先載入映射表
     emp_map = pd.read_sql("SELECT name_ch, id FROM employee", conn).set_index('name_ch')['id'].to_dict()
     item_map = pd.read_sql("SELECT name, id FROM salary_item", conn).set_index('name')['id'].to_dict()
 
@@ -130,7 +129,7 @@ def batch_upsert_allowances(conn, df: pd.DataFrame):
         try:
             cursor.executemany(sql, data_to_upsert)
             conn.commit()
-            report['updated'] = cursor.rowcount # SQLite ON CONFLICT 回報受影響行數
+            report['updated'] = cursor.rowcount 
         except Exception as e:
             conn.rollback()
             report['errors'].append({'row': 'N/A', 'reason': f'資料庫操作失敗: {e}'})
@@ -148,6 +147,7 @@ def get_monthly_adjustments(conn, year: int, month: int):
         esi.id, 
         e.name_ch as '員工姓名', 
         si.name as '項目名稱', 
+        si.type as '類型',
         esi.amount as '金額',
         esi.note as '備註'
     FROM employee_salary_item esi
