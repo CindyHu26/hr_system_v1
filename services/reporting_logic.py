@@ -6,6 +6,7 @@ import pandas as pd
 from db import queries_salary_read as q_read
 from db import queries_salary_base as q_base
 from db import queries_config as q_config
+from db import queries_insurance as q_ins
 
 def generate_annual_salary_summary(conn, year: int, item_ids: list):
     """產生年度薪資總表的核心邏輯。"""
@@ -145,3 +146,73 @@ def calculate_nhi_personal_bonus_for_period(conn, year: int, start_month: int, e
     period_bonus_summary['應繳補充保費'] = (period_bonus_summary['應計費金額'] * NHI_SUPPLEMENT_RATE).round().astype(int)
     result_df = period_bonus_summary[['name_ch', '期間獎金總額', '投保薪資', '計費門檻', '應計費金額', '應繳補充保費']].rename(columns={'name_ch': '員工姓名'})
     return result_df[result_df['應繳補充保費'] > 0].sort_values(by='應繳補充保費', ascending=False)
+
+def generate_nhi_accountant_summary(conn, year: int, item_ids: list):
+    """為會計事務所產生年度二代健保計算用的獎金總表。"""
+    if not item_ids:
+        return pd.DataFrame()
+
+    # 1. 查詢包含身分證號的薪資資料
+    df_raw = q_read.get_annual_salary_summary_data(conn, year, item_ids, include_id_no=True)
+    if df_raw.empty:
+        return pd.DataFrame()
+
+    # 2. 取得最新的加保公司資訊
+    df_ins = q_ins.get_all_insurance_history(conn)
+    latest_ins = pd.DataFrame()
+    if not df_ins.empty:
+        df_ins['start_date'] = pd.to_datetime(df_ins['start_date'])
+        latest_ins = df_ins.loc[df_ins.groupby('name_ch')['start_date'].idxmax()][['name_ch', 'company_name']]
+
+    # 3. 樞紐分析：將長資料轉為寬資料
+    pivot_df = df_raw.pivot_table(
+        index=['員工姓名', '身分證字號'],
+        columns='month',
+        values='monthly_total',
+        fill_value=0
+    ).reset_index()
+
+    # 4. 合併加保公司資訊
+    if not latest_ins.empty:
+        final_df = pd.merge(pivot_df, latest_ins, left_on='員工姓名', right_on='name_ch', how='left')
+        final_df.drop(columns=['name_ch'], inplace=True)
+    else:
+        final_df = pivot_df
+        final_df['company_name'] = 'N/A'
+        
+    final_df.rename(columns={'company_name': '加保公司'}, inplace=True)
+
+    # 5. 確保所有月份欄位都存在
+    month_cols = {}
+    for m in range(1, 13):
+        col_name = f'{m}月'
+        month_cols[m] = col_name
+        if col_name not in final_df.columns:
+            # 檢查原始樞紐分析的欄位名 (可能是數字或字串)
+            if m in final_df.columns:
+                final_df.rename(columns={m: col_name}, inplace=True)
+            elif str(m) in final_df.columns:
+                 final_df.rename(columns={str(m): col_name}, inplace=True)
+            else:
+                final_df[col_name] = 0
+
+    # 6. 計算區間總和與年度總和
+    final_df['端午 (1-5月)'] = final_df[[month_cols[m] for m in range(1, 6)]].sum(axis=1)
+    final_df['中秋 (6-10月)'] = final_df[[month_cols[m] for m in range(6, 11)]].sum(axis=1)
+    final_df['年終 (11-12月)'] = final_df[[month_cols[m] for m in range(11, 13)]].sum(axis=1)
+    final_df['全年度 (1-12月)'] = final_df[[month_cols[m] for m in range(1, 13)]].sum(axis=1)
+
+    # 7. 整理並排序最終欄位
+    final_cols_order = [
+        '員工姓名', '加保公司', '身分證字號',
+        '1月', '2月', '3月', '4月', '5月', '端午 (1-5月)',
+        '6月', '7月', '8月', '9月', '10月', '中秋 (6-10月)',
+        '11月', '12月', '年終 (11-12月)', '全年度 (1-12月)'
+    ]
+    
+    # 確保所有欄位都存在
+    for col in final_cols_order:
+        if col not in final_df.columns:
+            final_df[col] = 0
+
+    return final_df[final_cols_order]

@@ -97,16 +97,27 @@ def get_salary_report_for_editing(conn, year, month):
 
     return report_df[final_cols_ordered_unique].sort_values(by='員工編號').reset_index(drop=True), item_types
 
-def get_annual_salary_summary_data(conn, year: int, item_ids: list):
+def get_annual_salary_summary_data(conn, year: int, item_ids: list, include_id_no: bool = False):
+    """
+    (V2) 產生年度薪資總表的基礎查詢。
+    - 新增 include_id_no 參數以決定是否連帶查詢身分證號。
+    - 只查詢 status = 'final' 的薪資紀錄。
+    """
     if not item_ids: return pd.DataFrame()
     placeholders = ','.join('?' for _ in item_ids)
+    
+    # 根據參數決定要查詢的欄位
+    select_cols = "e.hr_code as '員工編號', e.name_ch as '員工姓名'"
+    if include_id_no:
+        select_cols += ", e.id_no as '身分證字號'"
+    
     query = f"""
     SELECT
-        e.hr_code as '員工編號', e.name_ch as '員工姓名', s.month, SUM(sd.amount) as monthly_total
+        {select_cols}, s.month, SUM(sd.amount) as monthly_total
     FROM salary_detail sd
     JOIN salary s ON sd.salary_id = s.id
     JOIN employee e ON s.employee_id = e.id
-    WHERE s.year = ? AND sd.salary_item_id IN ({placeholders})
+    WHERE s.year = ? AND sd.salary_item_id IN ({placeholders}) AND s.status = 'final'
     GROUP BY e.id, s.month
     ORDER BY e.hr_code, s.month;
     """

@@ -29,7 +29,8 @@ from views import (
     annual_leave,
     attendance_report,
     bank_transfer_report,
-    salary_report
+    salary_report,
+    nhi_accountant_report
 )
 
 # --- 頁面設定 ---
@@ -73,7 +74,8 @@ PAGES_REPORTING = {
     "💵 薪資月報與薪資單": salary_report,
     "🏦 銀行薪轉檔產製": bank_transfer_report,
     "📊 年度薪資總表": annual_summary,
-    "📈 健保補充保費試算": nhi_summary
+    "📈 健保補充保費試算": nhi_summary,
+    "🧾 會計用二代健保總表": nhi_accountant_report
 }
 
 ALL_PAGES = {**PAGES_ADMIN, **PAGES_ATTENDANCE, **PAGES_SALARY, **PAGES_REPORTING}
