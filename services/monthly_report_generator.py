@@ -138,11 +138,17 @@ def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
     df_report.rename(columns={'實發薪資': '實支金額'}, inplace=True)
     
     df_report['加班費'] = df_report.get('加班費(延長工時)', 0) + df_report.get('加班費(再延長工時)', 0)
-
+    declaration_salary_deductions = (
+        df_report.get('遲到', 0) + 
+        df_report.get('早退', 0) + 
+        df_report.get('事假', 0) + 
+        df_report.get('病假', 0)
+    )
+    df_report['申報薪資'] = df_report.get('底薪', 0) + declaration_salary_deductions
     core_cols = ['員工姓名', '員工編號', 'company_name', 'dept']
     earning_cols = sorted([k for k, v in item_types.items() if v == 'earning' and '加班費' not in k and k != '底薪'])
     deduction_cols = sorted([k for k, v in item_types.items() if v == 'deduction' and k != '勞健保'])
-    summary_cols = ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金', '勞退提撥']
+    summary_cols = ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金', '申報薪資', '勞退提撥']
     
     final_cols = core_cols + ['底薪', '加班費'] + earning_cols + ['勞健保'] + deduction_cols + summary_cols
     
