@@ -66,7 +66,7 @@ def show_page(conn):
                     "國籍": st.column_config.SelectboxColumn("國籍", options=list(NATIONALITY_MAP.keys())),
                     "健保狀態": st.column_config.SelectboxColumn("健保狀態", options=["一般", "低收入戶", "自理"]),
                 },
-                disabled=["系統ID", "員工編號", "身份證號"]
+                disabled=["系統ID", "身份證號"]
             )
 
             if st.button("💾 儲存表格變更", type="primary"):
@@ -178,7 +178,7 @@ def show_page(conn):
                         st.markdown("##### 基本資料")
                         c1, c2, c3 = st.columns(3)
                         name_ch_edit = c1.text_input("姓名*", value=record_data.get('name_ch', ''))
-                        hr_code_edit = c2.text_input("員工編號*", value=record_data.get('hr_code', ''), disabled=True)
+                        hr_code_edit = c2.text_input("員工編號*", value=record_data.get('hr_code', ''))
                         id_no_edit = c3.text_input("身分證號*", value=record_data.get('id_no', ''), disabled=True)
 
                         st.markdown("##### 職務資料")
@@ -221,7 +221,7 @@ def show_page(conn):
                         col_update, col_delete = st.columns(2)
                         if col_update.form_submit_button("儲存變更", width='stretch'):
                             updated_data = {
-                                'name_ch': name_ch_edit, 'dept': dept_edit, 'title': title_edit, 'gender': gender_edit,
+                                'name_ch': name_ch_edit, 'hr_code': hr_code_edit,'dept': dept_edit, 'title': title_edit, 'gender': gender_edit,
                                 'nationality': NATIONALITY_MAP.get(nationality_ch_edit, 'TW'),
                                 'birth_date': birth_date_edit, 'entry_date': entry_date_edit,
                                 'phone': phone_edit, 'bank_account': bank_account_edit, 'address': address_edit,
@@ -229,10 +229,17 @@ def show_page(conn):
                                 'nhi_status': nhi_status_edit, 'nhi_status_expiry': nhi_status_expiry_edit,
                                 'note': note_edit
                             }
-                            cleaned_data = {k: (v.strftime('%Y-%m-%d') if isinstance(v, date) else (v if v != '' else None)) for k, v in updated_data.items()}
-                            q_common.update_record(conn, 'employee', emp_id, cleaned_data)
-                            st.success(f"員工 {name_ch_edit} 的資料已更新！")
-                            st.rerun()
+                            try:
+                                cleaned_data = {k: (v.strftime('%Y-%m-%d') if isinstance(v, date) else (v if v != '' else None)) for k, v in updated_data.items()}
+                                q_common.update_record(conn, 'employee', emp_id, cleaned_data)
+                                st.success(f"員工 {name_ch_edit} 的資料已更新！")
+                                if 'original_employee_df' in st.session_state: del st.session_state.original_employee_df
+                                if 'employee_df_raw' in st.session_state: del st.session_state.employee_df_raw
+                                st.rerun()
+                            except sqlite3.IntegrityError:
+                                st.error(f"更新失敗：員工編號 '{hr_code_edit}' 可能與現有員工重複。")
+                            except Exception as e:
+                                st.error(f"更新時發生未知錯誤: {e}")
 
                         if col_delete.form_submit_button("🔴 刪除此員工", type="primary", width='stretch'):
                             try:

@@ -9,6 +9,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from db import queries_salary_read as q_read
 from db import queries_employee as q_emp
 from db import queries_insurance as q_ins
+from utils.helpers import get_monthly_dates
 
 def generate_bank_transfer_xlsx_files(conn, year: int, month: int):
     """
@@ -27,17 +28,30 @@ def generate_bank_transfer_xlsx_files(conn, year: int, month: int):
     # --- 步驟 3: 補全資料 ---
     ins_df = q_ins.get_all_insurance_history(conn)
     if not ins_df.empty:
-        ins_df['start_date'] = pd.to_datetime(ins_df['start_date'])
-        latest_ins = ins_df.loc[ins_df.groupby('name_ch')['start_date'].idxmax()]
-        final_df = pd.merge(
-            final_df,
-            latest_ins[['name_ch', 'company_name']],
-            left_on='員工姓名',
-            right_on='name_ch',
-            how='left'
-        )
+        month_start, month_end = get_monthly_dates(year, month)
+        ins_df['start_date_dt'] = pd.to_datetime(ins_df['start_date'])
+        ins_df['end_date_dt'] = pd.to_datetime(ins_df['end_date'], errors='coerce')
+
+        # 1. 篩選出在該薪資月份內有效的加保紀錄
+        active_ins_df = ins_df[
+            (ins_df['start_date_dt'] <= pd.to_datetime(month_end)) &
+            (ins_df['end_date_dt'].isnull() | (ins_df['end_date_dt'] >= pd.to_datetime(month_start)))
+        ].copy()
+        
+        # 2. 在有效的紀錄中，找到每個員工最新的一筆
+        if not active_ins_df.empty:
+            latest_ins = active_ins_df.loc[active_ins_df.groupby('name_ch')['start_date_dt'].idxmax()]
+            final_df = pd.merge(
+                final_df,
+                latest_ins[['name_ch', 'company_name']],
+                left_on='員工姓名',
+                right_on='name_ch',
+                how='left'
+            )
+        else:
+            final_df['company_name'] = '無有效加保'
     else:
-        final_df['company_name'] = '未指定'
+        final_df['company_name'] = '無加保紀錄'
 
     all_employees_df = q_emp.get_all_employees(conn)
     merged_df = pd.merge(

@@ -4,16 +4,27 @@ from datetime import date
 
 def get_employee_basic_data_for_report(conn):
     """
-    查詢所有在職員工的基本資料，並包含他們最新的加保公司。
-    V2: 修正篩選在職員工的邏輯，使其更穩健。
+    查詢所有在職員工的基本資料，並包含他們最新的、且當前有效的加保公司。
+    V3: 修正 latest_insurance 邏輯，確保只抓取當前有效的加保紀錄。
     """
-    query = """
+    today_str = date.today().strftime('%Y-%m-%d')
+    
+    query = f"""
     WITH latest_insurance AS (
         SELECT
             employee_id,
             company_id,
-            ROW_NUMBER() OVER(PARTITION BY employee_id ORDER BY start_date DESC) as rn
+            -- 核心修改：只在當前有效的加保紀錄中進行排序
+            ROW_NUMBER() OVER(
+                PARTITION BY employee_id 
+                ORDER BY start_date DESC
+            ) as rn
         FROM employee_company_history
+        WHERE 
+            -- 加保日必須在今天或今天之前
+            date(start_date) <= date('{today_str}')
+            -- 退保日必須是空的，或是還沒到
+            AND (end_date IS NULL OR TRIM(end_date) = '' OR date(end_date) >= date('{today_str}'))
     )
     SELECT
         e.id,
@@ -25,7 +36,6 @@ def get_employee_basic_data_for_report(conn):
     FROM employee e
     LEFT JOIN latest_insurance li ON e.id = li.employee_id AND li.rn = 1
     LEFT JOIN company c ON li.company_id = c.id
-    /* 使用 TRIM 函數來處理可能存在的空格，讓判斷更準確 */
     WHERE (e.resign_date IS NULL OR TRIM(e.resign_date) = '')
     ORDER BY c.name, e.hr_code;
     """

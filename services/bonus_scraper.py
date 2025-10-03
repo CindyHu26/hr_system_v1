@@ -64,6 +64,11 @@ def fetch_all_bonus_data(username, password, year, month, employee_names, progre
                 # 5. 選擇 "費用項目" 為 "外勞服務費"
                 Select(wait.until(EC.visibility_of_element_located((By.NAME, "LAB03SS")))).select_by_visible_text('外勞服務費')
 
+                # 5-1. 選擇 "外勞姓名用" 為 "2" (中文)
+                employee_name_format = wait.until(EC.element_to_be_clickable((By.ID, "CU00_sel2")))
+                employee_name_format.clear()
+                employee_name_format.send_keys("2")
+
                 # 6. 點擊 "列印作業" 按鈕
                 submit_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@type='submit' and @value='列印作業']")))
                 submit_button.click()

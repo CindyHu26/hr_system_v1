@@ -44,6 +44,10 @@ def fetch_performance_count(username, password, start_date_str, end_date_str):
         
         wait.until(EC.presence_of_element_located((By.NAME, "myform")))
         
+        # 0. 確保無雇主鎖定
+        driver.find_element(By.ID, "CU00_BNO").clear()
+        driver.find_element(By.ID, "CU00_ENO").clear()
+        
         # 1. 填寫期間起始日與截止日
         driver.find_element(By.ID, "CU00_BDATE").clear()
         driver.find_element(By.ID, "CU00_BDATE").send_keys(start_date_str)
