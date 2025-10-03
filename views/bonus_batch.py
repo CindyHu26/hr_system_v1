@@ -138,10 +138,17 @@ def show_page(conn):
 
         employee_list = q_emp.get_all_employees(conn)['name_ch'].unique().tolist()
 
+        df_for_editing = st.session_state.bonus_details_df.copy()
+        date_cols_to_convert = ['入境日', '帳款日', '收款日']
+        for col in date_cols_to_convert:
+            if col in df_for_editing.columns:
+                # 使用 to_datetime 進行穩健的轉換，無法轉換的會變成 NaT
+                df_for_editing[col] = pd.to_datetime(df_for_editing[col], errors='coerce')
+
         st.write("您可以在下表中直接修改、刪除或新增獎金項目。完成所有編輯後，請點擊「💾 儲存草稿」。")
         edited_df = st.data_editor(
-            st.session_state.bonus_details_df,
-            num_rows="dynamic", width='stretch',
+            df_for_editing, # 使用轉換過格式的 DataFrame
+            num_rows="dynamic",
             column_config={
                 "業務員姓名": st.column_config.SelectboxColumn("業務員姓名", options=employee_list, required=True),
                 "帳款名稱": st.column_config.TextColumn("帳款名稱", required=True),
@@ -323,7 +330,8 @@ def show_page(conn):
                 all_people_in_df = final_df['業務員姓名'].unique().tolist()
                 selected_people = st.multiselect(
                     "選擇要匯出的人員 (可複選)",
-                    options=all_people_in_df
+                    options=all_people_in_df,
+                    default=all_people_in_df
                 )
                 
                 if selected_people:

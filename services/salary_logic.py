@@ -210,13 +210,19 @@ def calculate_salary_df(conn, year, month):
         total_deduction = temp_df[deduction_cols].sum(axis=1, numeric_only=True).iloc[0]
         net_salary = total_payable + total_deduction
         
-        bank_transfer_items = ['底薪', '加班費(延長工時)', '加班費(再延長工時)', '勞保費', '健保費', '事假', '病假', '遲到', '早退']
-        existing_bank_items = [item for item in bank_transfer_items if item in temp_df.columns]
-        
-        bank_transfer_amount = 0
-        if existing_bank_items:
-            bank_transfer_amount = temp_df[existing_bank_items].sum(axis=1).iloc[0]
-        cash_amount = net_salary - bank_transfer_amount
+        if not is_insured_in_company:
+            # 若員工未加保，則將全部實支金額轉為銀行匯款
+            bank_transfer_amount = net_salary
+            cash_amount = 0
+        else:
+            # 維持原本的計算邏輯
+            bank_transfer_items = ['底薪', '加班費(延長工時)', '加班費(再延長工時)', '勞保費', '健保費', '事假', '病假', '遲到', '早退']
+            existing_bank_items = [item for item in bank_transfer_items if item in temp_df.columns]
+            
+            bank_transfer_amount = 0
+            if existing_bank_items:
+                bank_transfer_amount = temp_df[existing_bank_items].sum(axis=1).iloc[0]
+            cash_amount = net_salary - bank_transfer_amount
 
         details['應付總額'] = int(round(total_payable))
         details['應扣總額'] = int(round(total_deduction))
