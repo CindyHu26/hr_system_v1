@@ -91,7 +91,7 @@ def show_page(conn):
             st.info(f"以下 {len(ineligible)} 位非服務/行政部門的員工已被自動排除：{', '.join(ineligible)}")
         
         if not summary_df.empty:
-            st.dataframe(summary_df, use_container_width=True)
+            st.dataframe(summary_df, width='stretch')
             fname = f"annual_leave_summary_{pd.Timestamp.now().strftime('%Y%m%d')}.csv"
             st.download_button(
                 "下載總結報告",

@@ -41,7 +41,7 @@ def show_page(conn):
         
         edited_df = st.data_editor(
             df_display.rename(columns=COLUMN_MAP),
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "加保日期": st.column_config.DateColumn("加保日期", format="YYYY-MM-DD"),
                 "退保日期": st.column_config.DateColumn("退保日期", format="YYYY-MM-DD"),
@@ -137,7 +137,7 @@ def show_page(conn):
                     note_edit = st.text_input("備註", value=record_data.get('note', '') or '')
 
                     col_update, col_delete = st.columns(2)
-                    if col_update.form_submit_button("儲存變更", use_container_width=True):
+                    if col_update.form_submit_button("儲存變更", width='stretch'):
                         update_data = {
                             'start_date': start_date_edit.strftime('%Y-%m-%d') if start_date_edit else None,
                             'end_date': end_date_edit.strftime('%Y-%m-%d') if end_date_edit else None,
@@ -149,7 +149,7 @@ def show_page(conn):
                             del st.session_state.original_insurance_df
                         st.rerun()
                     
-                    if col_delete.form_submit_button("🔴 刪除此紀錄", type="primary", use_container_width=True):
+                    if col_delete.form_submit_button("🔴 刪除此紀錄", type="primary", width='stretch'):
                         q_common.delete_record(conn, 'employee_company_history', record_id)
                         st.warning(f"紀錄 ID: {record_id} 已被刪除！")
                         if 'original_insurance_df' in st.session_state:

@@ -77,7 +77,7 @@ def show_page(conn):
 
     edited_df = st.data_editor(
         df_to_edit.style.apply(lambda row: ['background-color: #f0f2f6'] * len(row) if row.status == 'final' else [''] * len(row), axis=1),
-        use_container_width=True,
+        width='stretch',
         key=f"salary_editor_{year}_{month}"
     )
 

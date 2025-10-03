@@ -27,7 +27,7 @@ def show_page(conn):
         st.info("薪資系統中的所有計算（如外籍稅務門檻）都將以此處設定的年度基本工資為基準。")
         try:
             wages_df = q_config.get_all_minimum_wages(conn)
-            st.dataframe(wages_df, use_container_width=True)
+            st.dataframe(wages_df, width='stretch')
         except Exception as e:
             st.error(f"讀取基本工資歷史時發生錯誤: {e}")
         

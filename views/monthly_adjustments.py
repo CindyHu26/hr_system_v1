@@ -29,7 +29,7 @@ def show_page(conn):
     try:
         st.subheader(f"{year} 年 {month} 月 單次調整紀錄總覽")
         adjustments_df = q_allow.get_monthly_adjustments(conn, year, month)
-        st.dataframe(adjustments_df, use_container_width=True)
+        st.dataframe(adjustments_df, width='stretch')
     except Exception as e:
         st.error(f"讀取調整紀錄時發生錯誤: {e}")
         adjustments_df = pd.DataFrame()

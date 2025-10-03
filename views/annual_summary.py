@@ -48,7 +48,7 @@ def show_page(conn):
         st.write("---")
         st.subheader("報表預覽")
         display_df = st.session_state.annual_summary_df
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width='stretch')
 
         if not display_df.empty:
             csv = display_df.to_csv(index=False).encode('utf-8-sig')

@@ -61,7 +61,7 @@ def show_page(conn):
         if display_df.empty:
             st.info(f"在 {year} 年度中查無所選薪資項目的紀錄。")
         else:
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width='stretch')
             csv = display_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label="📥 下載CSV報表",

@@ -35,10 +35,10 @@ def show_page(conn):
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("#### 勞工保險級距")
-                st.dataframe(labor_df, use_container_width=True)
+                st.dataframe(labor_df, width='stretch')
             with col2:
                 st.markdown("#### 全民健康保險級距")
-                st.dataframe(health_df, use_container_width=True)
+                st.dataframe(health_df, width='stretch')
         else:
             st.warning("資料庫中尚無任何級距資料，請先從下方進行更新。")
     except Exception as e:

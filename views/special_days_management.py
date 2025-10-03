@@ -19,7 +19,7 @@ def show_page(conn):
             'date': '日期',
             'description': '事由'
         })
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width='stretch')
 
     except Exception as e:
         st.error(f"讀取特殊日期時發生錯誤: {e}")

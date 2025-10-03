@@ -110,7 +110,7 @@ def show_page(conn):
                     "績效獎金金額", min_value=0, format="%d 元"
                 ),
             },
-            use_container_width=True, hide_index=True
+            width='stretch', hide_index=True
         )
 
         st.markdown("---")
@@ -118,7 +118,7 @@ def show_page(conn):
         st.markdown(f"#### 總計發出獎金: <font color='red'>**{total_bonus:,}**</font> 元", unsafe_allow_html=True)
 
         c1, c2 = st.columns([1,1])
-        if c1.button("💾 儲存最終獎金分配", type="primary", use_container_width=True):
+        if c1.button("💾 儲存最終獎金分配", type="primary", width='stretch'):
             with st.spinner("正在將最終結果寫入資料庫..."):
                 try:
                     saved_count = logic_perf.save_final_bonuses(conn, data['year'], data['month'], edited_df)
@@ -129,7 +129,7 @@ def show_page(conn):
                 except Exception as e:
                     st.error(f"儲存時發生錯誤: {e}")
 
-        if c2.button("返回上一步修改人數", use_container_width=True):
+        if c2.button("返回上一步修改人數", width='stretch'):
             st.session_state.perf_bonus_step = 2
             if 'distribution_df' in st.session_state.perf_bonus_data:
                 del st.session_state.perf_bonus_data['distribution_df']

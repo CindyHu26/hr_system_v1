@@ -66,7 +66,7 @@ def show_page(conn):
 
             edited_df = st.data_editor(
                 st.session_state['leave_check_results'],
-                use_container_width=True,
+                width='stretch',
                 num_rows="dynamic",
                 key="leave_editor",
                 # 新增 column_config 來處理 Datetime 格式
@@ -135,7 +135,7 @@ def show_page(conn):
             if show_only_anomalies:
                 # 篩選出包含特定關鍵字的紀錄
                 anomalies_df = result_df[result_df['分析結果'].str.contains("⚠️|❓", na=False)]
-                st.dataframe(anomalies_df, use_container_width=True)
+                st.dataframe(anomalies_df, width='stretch')
             else:
                 # 顯示所有紀錄
-                st.dataframe(result_df, use_container_width=True)
+                st.dataframe(result_df, width='stretch')

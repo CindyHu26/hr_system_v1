@@ -141,7 +141,7 @@ def show_page(conn):
         st.write("您可以在下表中直接修改、刪除或新增獎金項目。完成所有編輯後，請點擊「💾 儲存草稿」。")
         edited_df = st.data_editor(
             st.session_state.bonus_details_df,
-            num_rows="dynamic", use_container_width=True,
+            num_rows="dynamic", width='stretch',
             column_config={
                 "業務員姓名": st.column_config.SelectboxColumn("業務員姓名", options=employee_list, required=True),
                 "帳款名稱": st.column_config.TextColumn("帳款名稱", required=True),
@@ -205,7 +205,7 @@ def show_page(conn):
 
         btn_c1, btn_c2 = st.columns(2)
         with btn_c1:
-            if st.button("💾 儲存草稿", use_container_width=True):
+            if st.button("💾 儲存草稿", width='stretch'):
                 df_to_save = st.session_state.bonus_details_df.dropna(
                     subset=['業務員姓名', '帳款名稱', '應收金額', '實收金額']
                 )
@@ -273,7 +273,7 @@ def show_page(conn):
         if not st.session_state.bonus_summary_df.empty:
             st.markdown("---")
             st.markdown("#### 計算結果預覽")
-            st.dataframe(st.session_state.bonus_summary_df, use_container_width=True)
+            st.dataframe(st.session_state.bonus_summary_df, width='stretch')
 
             st.markdown("---")
             st.subheader("步驟 3: 鎖定最終版本")
@@ -314,7 +314,7 @@ def show_page(conn):
             final_df = st.session_state.final_bonus_details_df
             st.markdown("---")
             st.markdown("#### 查詢結果")
-            st.dataframe(final_df, use_container_width=True)
+            st.dataframe(final_df, width='stretch')
 
             if not final_df.empty:
                 st.markdown("---")

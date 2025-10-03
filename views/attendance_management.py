@@ -34,7 +34,7 @@ def show_page(conn):
                 'leave_minutes': '請假(分)',
                 'overtime1_minutes': '加班1(分)', 'overtime2_minutes': '加班2(分)', 'overtime3_minutes': '加班3(分)',
                 'note': '備註'
-            }), use_container_width=False, height=400)
+            }), width='content', height=400)
 
             with st.expander("單筆修改簽到退 (適用於快速修正單日資料)"):
                 if not att_df.empty:

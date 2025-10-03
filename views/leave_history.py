@@ -45,7 +45,7 @@ def show_page(conn):
         
         st.session_state.leave_history_df = df_for_display # 將查詢結果存入 session
         
-        st.dataframe(df_for_display[existing_cols], use_container_width=True)
+        st.dataframe(df_for_display[existing_cols], width='stretch')
 
         if not df_for_display.empty:
             csv = df_for_display.to_csv(index=False).encode('utf-8-sig')
@@ -77,7 +77,7 @@ def show_page(conn):
         
         if not summary_df.empty:
             summary_df['總計'] = summary_df.sum(axis=1)
-            st.dataframe(summary_df.style.format("{:.2f}").background_gradient(cmap='viridis', subset=['總計']), use_container_width=True)
+            st.dataframe(summary_df.style.format("{:.2f}").background_gradient(cmap='viridis', subset=['總計']), width='stretch')
         else:
             st.info("目前篩選範圍內無資料可供統計。")
             

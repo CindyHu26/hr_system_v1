@@ -68,4 +68,4 @@ def show_page(conn):
                     for col in formatted_df.columns:
                         if pd.api.types.is_numeric_dtype(formatted_df[col]):
                             formatted_df[col] = formatted_df[col].map('{:,.0f}'.format)
-                    st.dataframe(formatted_df, use_container_width=True, hide_index=True)
+                    st.dataframe(formatted_df, width='stretch', hide_index=True)

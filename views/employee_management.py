@@ -55,7 +55,7 @@ def show_page(conn):
             st.info("您可以直接在下表中修改資料，完成後點擊表格下方的「儲存變更」按鈕。")
             
             edited_df = st.data_editor(
-                df_processed.rename(columns=COLUMN_MAP), use_container_width=True,
+                df_processed.rename(columns=COLUMN_MAP), width='stretch',
                 column_config={
                     "到職日": st.column_config.DateColumn("到職日", format="YYYY-MM-DD"),
                     "生日": st.column_config.DateColumn("生日", format="YYYY-MM-DD"),
@@ -219,7 +219,7 @@ def show_page(conn):
                         note_edit = st.text_area("備註", value=record_data.get('note', '') or '')
 
                         col_update, col_delete = st.columns(2)
-                        if col_update.form_submit_button("儲存變更", use_container_width=True):
+                        if col_update.form_submit_button("儲存變更", width='stretch'):
                             updated_data = {
                                 'name_ch': name_ch_edit, 'dept': dept_edit, 'title': title_edit, 'gender': gender_edit,
                                 'nationality': NATIONALITY_MAP.get(nationality_ch_edit, 'TW'),
@@ -234,7 +234,7 @@ def show_page(conn):
                             st.success(f"員工 {name_ch_edit} 的資料已更新！")
                             st.rerun()
 
-                        if col_delete.form_submit_button("🔴 刪除此員工", type="primary", use_container_width=True):
+                        if col_delete.form_submit_button("🔴 刪除此員工", type="primary", width='stretch'):
                             try:
                                 q_common.delete_record(conn, 'employee', emp_id)
                                 st.warning(f"員工 '{selected_emp_key}' 已被刪除！")

@@ -89,7 +89,7 @@ def show_page(conn):
                 'pension_override': '勞退提撥(手動)',
                 'start_date': '生效日', 'end_date': '結束日', 'note': '備註'
             })
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width='stretch')
 
         except Exception as e:
             st.error(f"讀取歷史紀錄時發生錯誤: {e}")
@@ -168,7 +168,7 @@ def show_page(conn):
                         pension_override_edit = c8.number_input("勞退提撥(手動)", min_value=0, step=1, value=int(pension_val) if pd.notna(pension_val) else None)
 
                         c_update, c_delete = st.columns(2)
-                        if c_update.form_submit_button("儲存變更", use_container_width=True):
+                        if c_update.form_submit_button("儲存變更", width='stretch'):
                             insurance_salary_edit = q_ins.get_insurance_salary_level(conn, base_salary_edit)
                             updated_data = {
                                 'base_salary': base_salary_edit, 'insurance_salary': insurance_salary_edit,
@@ -183,7 +183,7 @@ def show_page(conn):
                             st.success(f"紀錄 ID:{record_id} 已更新！")
                             st.rerun()
 
-                        if c_delete.form_submit_button("🔴 刪除此紀錄", use_container_width=True, type="primary"):
+                        if c_delete.form_submit_button("🔴 刪除此紀錄", width='stretch', type="primary"):
                             q_common.delete_record(conn, 'salary_base_history', record_id)
                             st.warning(f"紀錄 ID:{record_id} 已刪除！")
                             st.rerun()
@@ -234,7 +234,7 @@ def show_page(conn):
             df_preview = st.session_state.df_to_update_salary
             st.write(f"系統偵測到以下 {len(df_preview)} 位員工的底薪將從「目前底薪」被調整為 **{new_wage}** 元：")
             
-            st.dataframe(df_preview[['員工姓名', '目前底薪', '目前投保薪資']], use_container_width=True)
+            st.dataframe(df_preview[['員工姓名', '目前底薪', '目前投保薪資']], width='stretch')
 
             if st.button(f"2. 確認執行 {len(df_preview)} 位員工的批次調薪", type="primary"):
                 with st.spinner("正在批次寫入調薪紀錄..."):

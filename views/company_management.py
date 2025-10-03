@@ -37,7 +37,7 @@ def show_page(conn):
 
         edited_df = st.data_editor(
             df_display.rename(columns=COLUMN_MAP),
-            use_container_width=True,
+            width='stretch',
             disabled=["統一編號"]
         )
         
@@ -124,14 +124,14 @@ def show_page(conn):
                     }
                     
                     col_update, col_delete = st.columns(2)
-                    if col_update.form_submit_button("儲存變更", use_container_width=True):
+                    if col_update.form_submit_button("儲存變更", width='stretch'):
                         q_common.update_record(conn, 'company', company_id, updated_data)
                         st.success("公司資料已更新！")
                         if 'original_company_df' in st.session_state:
                             del st.session_state.original_company_df
                         st.rerun()
                     
-                    if col_delete.form_submit_button("🔴 刪除此公司", type="primary", use_container_width=True):
+                    if col_delete.form_submit_button("🔴 刪除此公司", type="primary", width='stretch'):
                         try:
                             q_common.delete_record(conn, 'company', company_id)
                             st.warning(f"公司 '{record_data['name']}' 已被刪除！")

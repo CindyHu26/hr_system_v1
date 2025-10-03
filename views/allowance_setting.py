@@ -45,7 +45,7 @@ def show_page(conn):
 
                 # 4. 使用 data_editor 顯示表格，用於快速修改金額
                 st.caption("您可以直接在下表中修改金額。修改後請點擊下方的「儲存變更」按鈕。")
-                edited_df = st.data_editor(wide_df, use_container_width=True, key="allowance_editor")
+                edited_df = st.data_editor(wide_df, width='stretch', key="allowance_editor")
 
                 # 5. 儲存來自 data_editor 的變更
                 if st.button("💾 儲存表格變更", type="primary"):
@@ -169,7 +169,7 @@ def show_page(conn):
                         st.markdown("##### 2. 選擇要套用的員工")
                         selected_employee_ids = employee_selector(conn, key_prefix="allowance_add")
                     
-                    if st.form_submit_button("批次新增/覆蓋設定", type="primary", use_container_width=True):
+                    if st.form_submit_button("批次新增/覆蓋設定", type="primary", width='stretch'):
                         if not selected_item_name or not selected_employee_ids:
                             st.error("請務必選擇「薪資項目」和至少一位「員工」！")
                         else:

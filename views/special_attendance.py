@@ -20,7 +20,7 @@ def show_page(conn):
 
     try:
         sa_df = q_att.get_special_attendance_by_month(conn, year, month)
-        st.dataframe(sa_df, use_container_width=True)
+        st.dataframe(sa_df, width='stretch')
     except Exception as e:
         st.error(f"讀取特別出勤紀錄時發生錯誤: {e}")
         sa_df = pd.DataFrame() 

@@ -122,9 +122,32 @@ def _generate_basic_salary_excel(conn, df: pd.DataFrame, year, month):
             df_merged[col_db] = 0
         df_report[col_report] = df_merged[col_db]
     
-    hourly_rate = (df_merged['底薪'] / 240).replace(0, pd.NA)
-    df_report['事假(時)'] = (df_report['事假'] / hourly_rate).abs().round(2).fillna(0)
-    df_report['病假(時)'] = (df_report['病假'] / (hourly_rate * 0.5)).abs().round(2).fillna(0)
+    # 定義一個安全的計算函式，用於逐行處理
+    def calculate_hours(row):
+        base_salary = pd.to_numeric(row.get('底薪', 0), errors='coerce')
+        sija_deduction = pd.to_numeric(row.get('事假', 0), errors='coerce')
+        bingjia_deduction = pd.to_numeric(row.get('病假', 0), errors='coerce')
+        
+        # 確保資料都成功轉為數字，否則設為 0
+        base_salary = base_salary if pd.notna(base_salary) else 0
+        sija_deduction = sija_deduction if pd.notna(sija_deduction) else 0
+        bingjia_deduction = bingjia_deduction if pd.notna(bingjia_deduction) else 0
+        
+        # 計算時薪，如果底薪為0，則時薪也為0，避免除以零錯誤
+        hourly_rate = base_salary / 240 if base_salary > 0 else 0
+        
+        # 計算時數
+        sija_hours = abs(sija_deduction / hourly_rate) if hourly_rate > 0 else 0
+        bingjia_hours = abs(bingjia_deduction / (hourly_rate * 0.5)) if hourly_rate > 0 else 0
+        
+        return pd.Series([sija_hours, bingjia_hours])
+
+    # 使用 apply 方法將上述函式應用到每一行
+    df_report[['事假(時)', '病假(時)']] = df_report.apply(calculate_hours, axis=1)
+
+    # 最後，對結果進行四捨五入和格式化
+    df_report['事假(時)'] = df_report['事假(時)'].round(2)
+    df_report['病假(時)'] = df_report['病假(時)'].round(2)
     df_report['延長工時'] = (df_merged.get('overtime1_minutes', 0) / 60).round(2)
     df_report['再延長工時'] = ((df_merged.get('overtime2_minutes', 0) + df_merged.get('overtime3_minutes', 0)) / 60).round(2)
 
@@ -138,6 +161,8 @@ def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
     df_report.rename(columns={'實發薪資': '實支金額'}, inplace=True)
     
     df_report['加班費'] = df_report.get('加班費(延長工時)', 0) + df_report.get('加班費(再延長工時)', 0)
+
+    # 計算申報薪資
     declaration_salary_deductions = (
         df_report.get('遲到', 0) + 
         df_report.get('早退', 0) + 
@@ -145,12 +170,13 @@ def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
         df_report.get('病假', 0)
     )
     df_report['申報薪資'] = df_report.get('底薪', 0) + declaration_salary_deductions
+
     core_cols = ['員工姓名', '員工編號', 'company_name', 'dept']
     earning_cols = sorted([k for k, v in item_types.items() if v == 'earning' and '加班費' not in k and k != '底薪'])
     deduction_cols = sorted([k for k, v in item_types.items() if v == 'deduction' and k != '勞健保'])
-    summary_cols = ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金', '申報薪資', '勞退提撥']
+    summary_cols = ['應付總額', '應扣總額', '實支金額', '匯入銀行', '現金', '勞退提撥']
     
-    final_cols = core_cols + ['底薪', '加班費'] + earning_cols + ['勞健保'] + deduction_cols + summary_cols
+    final_cols = core_cols + ['底薪', '申報薪資', '加班費'] + earning_cols + ['勞健保'] + deduction_cols + summary_cols
     
     for col in final_cols:
         if col not in df_report.columns:
@@ -166,34 +192,75 @@ def _generate_full_salary_excel(df: pd.DataFrame, item_types: dict):
     }, inplace=True)
     return _write_styled_excel(df_report, "薪資計算(加)", total_cols)
 
+# ▼▼▼ 核心修改：已更新為您提供的最新翻譯 ▼▼▼
+TRANSLATIONS = {
+    # 標題
+    "薪資表": {"en": "Payslip", "id": "Slip Gaji", "vi": "Phiếu Lương", "th": "สลิปเงินเดือน"},
+    "姓名": {"en": "Name", "id": "Nama", "vi": "Họ và tên", "th": "ชื่อ"},
+    # 表頭
+    "應付項目": {"en": "Earnings", "id": "jenis Penghasilan", "vi": "Các khoản thu nhập", "th": "รายได้"},
+    "金額": {"en": "Amount", "id": "Jumlah", "vi": "Số tiền", "th": "จำนวนเงิน"},
+    "計算方式/單位": {"en": "Calculation / Unit", "id": "Perhitungan / Satuan", "vi": "Cách tính / Đơn vị", "th": "วิธีการคำนวณ / หน่วย"},
+    "應扣項目": {"en": "Deductions", "id": "jenisPotongan", "vi": "Các khoản khấu trừ", "th": "รายการหัก"},
+    # 應付項目
+    "底薪": {"en": "Base Salary", "id": "Gaji Pokok", "vi": "Lương cơ bản", "th": "เงินเดือนพื้นฐาน"},
+    "加班費(延長工時)": {"en": "Overtime (Regular)", "id": "Jam Lembur (Biasa)", "vi": "Tiền làm thêm giờ (Thông thường)", "th": "ค่าล่วงเวลา (ทั่วไป)"},
+    "加班費(再延長工時)": {"en": "Overtime (Extended)", "id": "Jam Lembur (Lanjutan)", "vi": "Tiền làm thêm giờ (Kéo dài)", "th": "ค่าล่วงเวลา (พิเศษ)"},
+    # 應扣項目
+    "勞健保": {"en": "Labor & Health Insurance", "id": "asuransi tenaga kerja & asuransi kesehatan", "vi": "Bảo hiểm lao động và y tế", "th": "ประกันสังคมและสุขภาพ"},
+    "事假": {"en": "Personal Leave", "id": "Cuti Pribadi", "vi": "Nghỉ việc riêng", "th": "ลากิจ"},
+    "病假": {"en": "Sick Leave", "id": "Cuti Sakit", "vi": "Nghỉ ốm", "th": "ลาป่วย"},
+    "遲到": {"en": "Late Arrival", "id": "Terlambat bekerja", "vi": "Đi muộn", "th": "มาสาย"},
+    "早退": {"en": "Early Departure", "id": "Pulang lebih Awal", "vi": "Về sớm", "th": "กลับก่อนเวลา"},
+    # 總計
+    "應付合計": {"en": "Total Earnings", "id": "Total Penghasilan", "vi": "Tổng thu nhập", "th": "รายรับรวม"},
+    "應扣合計": {"en": "Total Deductions", "id": "Total Potongan", "vi": "Tổng khấu trừ", "th": "ยอดหักรวม"},
+    "實支金額": {"en": "Net Salary", "id": "Gaji Bersih", "vi": "Lương thực lĩnh", "th": "เงินเดือนสุทธิ"},
+    "勞退提撥": {"en": "Pension Contribution", "id": "Kontribusi Pensiun", "vi": "Quỹ hưu trí", "th": "เงินสมทบกองทุนสำรองเลี้ยงชีพ"},
+}
+
 def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
     document = Document()
     sections = document.sections
     for section in sections:
-        section.top_margin = Inches(0.4)
-        section.bottom_margin = Inches(0.4)
-        section.left_margin = Inches(0.5)
-        section.right_margin = Inches(0.5)
+        section.top_margin = Inches(0.25)
+        section.bottom_margin = Inches(0.25)
+        section.left_margin = Inches(0.2)
+        section.right_margin = Inches(0.2)
 
     style = document.styles['Normal']
     style.font.name = '標楷體'
     style.element.rPr.rFonts.set(qn('w:eastAsia'), '標楷體')
-    style.font.size = Pt(9)
+    style.font.size = Pt(8)
 
-    def set_cell_text(cell, text, bold=False, align='LEFT', size=9):
+    def get_multilang_text(key):
+        item = TRANSLATIONS.get(key, {"en": key, "id": key, "vi": key, "th": key})
+        # 1. 移除英文 'en'
+        # 2. 將分隔符號從 '\n' (換行) 改成 ' / ' (空格斜線空格)
+        return f"{key} / {item['id']} / {item['vi']} / {item['th']}"
+
+    def set_cell_text(cell, text_key, is_multilang=True, bold=False, align='LEFT', size=8, is_value=False):
         p = cell.paragraphs[0]
         p.text = ""
-        p.paragraph_format.space_before = Pt(1.5)
-        p.paragraph_format.space_after = Pt(1.5)
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        
         if align == 'CENTER':
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         elif align == 'RIGHT':
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         else:
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        
-        run = p.add_run(str(text))
+
+        if is_value:
+             run = p.add_run(str(text_key))
+        elif is_multilang:
+            run = p.add_run(get_multilang_text(text_key))
+        else:
+            run = p.add_run(str(text_key))
+
         run.font.name = '標楷體'
+        run.font.element.rPr.rFonts.set(qn('w:eastAsia'), 'Tahoma')
         run.font.bold = bold
         run.font.size = Pt(size)
 
@@ -207,70 +274,92 @@ def _generate_payslip_docx(df_basic: pd.DataFrame, year: int, month: int):
         table = document.add_table(rows=num_item_rows + 5, cols=6)
         table.style = 'Table Grid'
         
-        widths = [Inches(1.5), Inches(0.6), Inches(1.55), Inches(1.5), Inches(0.6), Inches(1.55)]
+        widths = [Inches(2.0), Inches(0.6), Inches(1.5), Inches(2.0), Inches(0.6), Inches(1.5)]
         for row in table.rows:
             for idx, width in enumerate(widths):
                 row.cells[idx].width = width
 
         table.cell(0, 0).merge(table.cell(0, 5))
-        set_cell_text(table.cell(0, 0), f"{year - 1911} 年 {month} 月份薪資表", bold=True, align='CENTER', size=12)
+        title_text = f"{year - 1911} 年 {month} 月份 " + TRANSLATIONS["薪資表"]["vi"] + " / " + TRANSLATIONS["薪資表"]["th"]
+        set_cell_text(table.cell(0, 0), title_text, is_multilang=False, bold=True, align='CENTER', size=11)
 
         table.cell(1, 0).merge(table.cell(1, 5))
-        set_cell_text(table.cell(1, 0), f"姓名：{emp_row.get('姓名', '')}", size=10)
-
-        set_cell_text(table.cell(2, 0), '應付項目', bold=True)
-        set_cell_text(table.cell(2, 1), '金額', bold=True, align='RIGHT')
-        set_cell_text(table.cell(2, 2), '計算方式/單位', bold=True, align='CENTER')
-        set_cell_text(table.cell(2, 3), '應扣項目', bold=True)
-        set_cell_text(table.cell(2, 4), '金額', bold=True, align='RIGHT')
-        set_cell_text(table.cell(2, 5), '計算方式/單位', bold=True, align='CENTER')
-
+        name_text = get_multilang_text("姓名") + f": {emp_row.get('姓名', '')}"
+        set_cell_text(table.cell(1, 0), name_text, is_multilang=False, size=10)
+        
+        def set_multilang_cell(cell, text_key, bold=False, align='LEFT', size=7):
+            p = cell.paragraphs[0]
+            p.clear()
+            #p.paragraph_format.space_before = Pt(2)
+            #p.paragraph_format.space_after = Pt(2)
+            if align == 'CENTER': p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            elif align == 'RIGHT': p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            else: p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            
+            run = p.add_run(get_multilang_text(text_key))
+            run.font.name = '標楷體'
+            run.font.element.rPr.rFonts.set(qn('w:eastAsia'), 'Tahoma')
+            run.font.bold = bold
+            run.font.size = Pt(size)
+        
+        # 表頭
+        set_multilang_cell(table.cell(2, 0), "應付項目", bold=True)
+        set_multilang_cell(table.cell(2, 1), "金額", bold=True, align='RIGHT')
+        set_multilang_cell(table.cell(2, 2), "計算方式/單位", bold=True, align='CENTER')
+        set_multilang_cell(table.cell(2, 3), "應扣項目", bold=True)
+        set_multilang_cell(table.cell(2, 4), "金額", bold=True, align='RIGHT')
+        set_multilang_cell(table.cell(2, 5), "計算方式/單位", bold=True, align='CENTER')
+        
+        # 項目明細
         for r in range(num_item_rows):
             if r < len(earnings):
                 item = earnings[r]
                 amount = int(emp_row.get(item['key'], 0))
-                set_cell_text(table.cell(r + 3, 0), item['label'])
-                set_cell_text(table.cell(r + 3, 1), f"{amount:,}" if amount != 0 else "-", align='RIGHT')
+                set_multilang_cell(table.cell(r + 3, 0), item['label'])
+                set_cell_text(table.cell(r + 3, 1), f"{amount:,}" if amount != 0 else "-", align='RIGHT', is_multilang=False, is_value=True, size=10)
                 
                 formula_text = item.get('formula', '')
                 if item.get('unit_key'):
                     unit_val = emp_row.get(item['unit_key'], 0)
                     if unit_val > 0:
                         formula_text += f" ({unit_val:.2f}{item['unit']})"
-
-                set_cell_text(table.cell(r + 3, 2), formula_text if formula_text else "-", align='CENTER', size=8)
+                set_cell_text(table.cell(r + 3, 2), formula_text if formula_text else "-", align='CENTER', is_multilang=False, is_value=True, size=8)
 
             if r < len(deductions):
                 item = deductions[r]
                 amount = int(abs(emp_row.get(item['key'], 0)))
-                set_cell_text(table.cell(r + 3, 3), item['label'])
-                set_cell_text(table.cell(r + 3, 4), f"{amount:,}" if amount != 0 else "-", align='RIGHT')
+                set_multilang_cell(table.cell(r + 3, 3), item['label'])
+                set_cell_text(table.cell(r + 3, 4), f"{amount:,}" if amount != 0 else "-", align='RIGHT', is_multilang=False, is_value=True, size=10)
 
                 formula_text = item.get('formula', '')
                 if item.get('unit_key'):
                     unit_val = emp_row.get(item['unit_key'], 0)
                     if unit_val > 0:
                         formula_text += f" ({unit_val:.2f}{item['unit']})"
+                set_cell_text(table.cell(r + 3, 5), formula_text if formula_text else "-", align='CENTER', is_multilang=False, is_value=True, size=8)
 
-                set_cell_text(table.cell(r + 3, 5), formula_text if formula_text else "-", align='CENTER', size=8)
-
+        # 總計
         total_row_1 = num_item_rows + 3
-        set_cell_text(table.cell(total_row_1, 0), '應付合計', bold=True)
-        set_cell_text(table.cell(total_row_1, 1), f"{int(emp_row.get('應付總額', 0)):,}", bold=True, align='RIGHT')
-        set_cell_text(table.cell(total_row_1, 3), '應扣合計', bold=True)
-        set_cell_text(table.cell(total_row_1, 4), f"{int(abs(emp_row.get('應扣總額', 0))):,}", bold=True, align='RIGHT')
+        set_multilang_cell(table.cell(total_row_1, 0), '應付合計', bold=True)
+        set_cell_text(table.cell(total_row_1, 1), f"{int(emp_row.get('應付總額', 0)):,}", bold=True, align='RIGHT', is_multilang=False, is_value=True, size=10)
+        set_multilang_cell(table.cell(total_row_1, 3), '應扣合計', bold=True)
+        set_cell_text(table.cell(total_row_1, 4), f"{int(abs(emp_row.get('應扣總額', 0))):,}", bold=True, align='RIGHT', is_multilang=False, is_value=True, size=10)
         
         total_row_2 = num_item_rows + 4
         table.cell(total_row_2, 0).merge(table.cell(total_row_2, 2))
-        set_cell_text(table.cell(total_row_2, 0), f"實支金額： {int(emp_row.get('實支金額', 0)):,}", bold=True)
-        table.cell(total_row_2, 3).merge(table.cell(total_row_2, 5))
-        set_cell_text(table.cell(total_row_2, 3), f"勞退提撥： {int(emp_row.get('勞退提撥', 0)):,}")
+        net_salary_text = get_multilang_text("實支金額") + f": {int(emp_row.get('實支金額', 0)):,}"
+        set_cell_text(table.cell(total_row_2, 0), net_salary_text, is_multilang=False, bold=True, size=10)
         
-        if (i + 1) % 4 == 0 and i < len(df_basic) - 1:
+        table.cell(total_row_2, 3).merge(table.cell(total_row_2, 5))
+        pension_text = get_multilang_text("勞退提撥") + f": {int(emp_row.get('勞退提撥', 0)):,}"
+        set_cell_text(table.cell(total_row_2, 3), pension_text, is_multilang=False, size=10)
+        
+        if (i + 1) % 3 == 0 and i < len(df_basic) - 1:
             document.add_page_break()
-        else:
+        # 如果不是頁面的第3筆，也同樣要判斷不是最後一筆，才插入間距
+        elif i < len(df_basic) - 1:
             p = document.add_paragraph()
-            p.paragraph_format.space_after = Pt(6)
+            p.paragraph_format.space_after = Pt(1) # 您可以維持或調整這個間距數字
 
     output = io.BytesIO()
     document.save(output)

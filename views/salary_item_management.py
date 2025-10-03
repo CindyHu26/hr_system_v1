@@ -20,7 +20,7 @@ def show_page(conn):
     })
     if '是否啟用' in items_df_display.columns:
         items_df_display['是否啟用'] = items_df_display['是否啟用'].apply(lambda x: '是' if x else '否')
-    st.dataframe(items_df_display, use_container_width=True)
+    st.dataframe(items_df_display, width='stretch')
 
     st.write("---")
 
@@ -67,7 +67,7 @@ def show_page(conn):
                     
                     c1, c2 = st.columns(2)
                     
-                    if c1.form_submit_button("儲存變更", use_container_width=True):
+                    if c1.form_submit_button("儲存變更", width='stretch'):
                         if not name_edit.strip():
                             st.error("「項目名稱」為必填欄位！")
                         else:
@@ -85,7 +85,7 @@ def show_page(conn):
                             except Exception as e:
                                 st.error(f"❌ 操作失敗：{e}")
                     
-                    if c2.form_submit_button("🔴 刪除此項目", type="primary", use_container_width=True):
+                    if c2.form_submit_button("🔴 刪除此項目", type="primary", width='stretch'):
                         try:
                             q_items.delete_salary_item(conn, item_id)
                             st.success(f"✅ 已成功刪除項目：{item_data['name']}")
