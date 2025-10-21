@@ -1,122 +1,133 @@
 # services/performance_bonus_scraper.py
 import os
 import re
-import time
+import time # 保留 time 給可能的延遲 (雖然在此版本未使用)
 import pandas as pd
-import glob
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import Select, WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import requests # <--- 引入 requests
+from requests.auth import HTTPBasicAuth # <--- 用於認證
+import streamlit as st # <-- 保留用於提示
+
+REQUEST_TIMEOUT = 180 # 維持較長的超時時間
 
 def fetch_performance_count(username, password, start_date_str, end_date_str):
     """
-    【修正版 v4】
-    - 根據使用者提供的最新 HTML 結構，修正所有欄位的定位方式。
-    - 保留從 .crdownload 暫存檔讀取文字的邏輯。
-    - 移除舊的、不穩定的 full XPath 定位方式。
+    【Requests 版本 - 根據 HTML 更新 Payload】
+    使用 requests 函式庫抓取績效目標人數。
+    假設：
+    1. 網站使用 HTTP Basic Authentication。
+    2. 點擊 "轉出Excel" 按鈕是提交一個 POST 請求。
+    3. 伺服器的回應是包含 "合計: X人" 和 "遞補: Y人" 的純文字或可解析的內容。
+    4. 不需要執行 JavaScript。
     """
+    # 從 .env 讀取績效獎金系統的 URL
     PERFORMANCE_BONUS_URL = os.getenv("PERFORMANCE_BONUS_URL")
     if not PERFORMANCE_BONUS_URL:
-        raise ValueError("環境變數 PERFORMANCE_BONUS_URL 未設定。")
+        raise ValueError("錯誤：請在 .env 檔案中設定 PERFORMANCE_BONUS_URL")
 
-    download_path = os.path.join(os.getcwd(), "temp_downloads_perf")
-    if not os.path.exists(download_path): os.makedirs(download_path)
-    for f in glob.glob(os.path.join(download_path, "*.*")): os.remove(f)
+    # --- 根據 HTML 更新 URL ---
+    form_url = PERFORMANCE_BONUS_URL # 假設 .env 中的 URL 就是表單頁面
+    # 從 form action 確認提交 URL
+    submit_url = "http://192.168.1.168/labor/labor_817_p02.php"
+    # --- URL 確認結束 ---
 
-    options = webdriver.ChromeOptions()
-    prefs = {
-        "download.default_directory": download_path,
-        "download.prompt_for_download": False, "download.directory_upgrade": True,
-        "safeBrowse.enabled": True, "plugins.always_open_pdf_externally": True
-    }
-    options.add_experimental_option("prefs", prefs)
-    options.add_argument('--headless')
+    # 使用 requests.Session 處理認證和 cookies
+    with requests.Session() as session:
+        session.auth = HTTPBasicAuth(username, password)
 
-    driver = None
-    try:
-        driver = webdriver.Chrome(options=options)
-        wait = WebDriverWait(driver, 180)
-        
-        base_url_no_protocol = PERFORMANCE_BONUS_URL.split('//')[1]
-        auth_url = f"http://{username}:{password}@{base_url_no_protocol}"
-        driver.get(auth_url)
-        
-        wait.until(EC.presence_of_element_located((By.NAME, "myform")))
-        
-        # 0. 確保無雇主鎖定
-        driver.find_element(By.ID, "CU00_BNO").clear()
-        driver.find_element(By.ID, "CU00_ENO").clear()
-        
-        # 1. 填寫期間起始日與截止日
-        driver.find_element(By.ID, "CU00_BDATE").clear()
-        driver.find_element(By.ID, "CU00_BDATE").send_keys(start_date_str)
-        driver.find_element(By.ID, "CU00_EDATE").clear()
-        driver.find_element(By.ID, "CU00_EDATE").send_keys(end_date_str)
-        
-        # 2. 選擇下拉選單選項
-        Select(driver.find_element(By.NAME, "CU00_LA198")).select_by_visible_text('一般移工')
-        Select(driver.find_element(By.NAME, "CU00_ORG1")).select_by_visible_text('入境任用')
-        Select(driver.find_element(By.NAME, "CU00_LNO")).select_by_visible_text('聘僱中')
-        Select(driver.find_element(By.NAME, "CU00_SALERS")).select_by_visible_text('全部')
-        
-        # 3. 填寫其他輸入框 (根據舊版邏輯)
-        # 注意: 如果這些欄位不存在或不需要，可以安全地移除
-        driver.find_element(By.NAME, "CU00_SDATE").clear()
-        driver.find_element(By.NAME, "CU00_SDATE").send_keys('1')
-        driver.find_element(By.NAME, "CU00_drt").clear()
-        driver.find_element(By.NAME, "CU00_drt").send_keys('5')
-        driver.find_element(By.NAME, "CU00_SEL33").clear()
-        driver.find_element(By.NAME, "CU00_SEL33").send_keys('9')
+        # --- 根據 HTML 更新 Payload ---
+        payload = {
+            'CU00_BNO': '',        # 起始雇主編號 (清空)
+            'CU00_ENO': '',        # 截止雇主編號 (清空)
+            'CU00_SDATE': '1',     # 期間別: 1.入境日 (匹配 Selenium)
+            'CU00_BDATE': start_date_str, # 期間起始日
+            'CU00_EDATE': end_date_str,   # 期間截止日
+            'CU00_BDATE1': '',     # 離境期間起始日
+            'CU00_EDATE1': '',     # 離境期間截止日
+            'CU00_BDATE2': '',     # 聘可期間起始日
+            'CU00_EDATE2': '',     # 聘可期間截止日
+            'CU00_BASE': '',       # 基準日期
+            'CU00_BASE_I': 'N',    # 廢止聘可移工算任用中?
+            'CU00_sel8': 'A',      # 工作地址: 全選
+            'CU00_LA04': '0',      # 移工國籍: 全部
+            'CU00_LA19': '0',      # 工種類別: 全部
+            'CU00_LA198': '1',     # 移工類別: 一般移工 (匹配 Selenium)
+            'CU00_WORK': '0',      # 申請類別: 全部
+            'CU00_PNO': '0',       # 接管身份代號: 所有
+            'CU00_ORG1': '1',      # 任用來源: 入境任用 (匹配 Selenium)
+            'CU00_LNO': '1',       # 離管身份代號: 聘僱中 (匹配 Selenium)
+            'CU00_LA28': '0',      # 離境原因: 全部
+            'CU00_SALERS': '0',    # 業務人員: 全部 (匹配 Selenium)
+            'CU00_MEMBER': '0',    # 負責行政人員: 全部
+            'CU00_SERVS': 'A',     # 負責客服人員: 全部
+            'CU00_ACCS': '0',      # 負責會計人員: 全部 (HTML 未顯示，但通常會有)
+            'CU00_TRANSF': '0',    # 負責雙語人員: 全部
+            'CU00_RET': '0',       # 回鍋工: 全部
+            'CU00_ORD': '1',       # 資料排序: 入境日
+            'CU00_drt': '5',       # 辦件別 (匹配 Selenium)
+            'CU00_SEL32': '4',     # 期滿到期: 無關
+            'CU00_SEL33': '9',     # 報表格式 (匹配 Selenium)
+            'CU00_SEL35': '1',     # 表單日期格式: 內定
+            'CU00_LA37': '',       # 國外仲介編號
+            'CU00_LA37_1': '',     # 國外仲介名稱
+            'CU00_LA120': '全部',  # 國內仲介: 全部
+            'LFK02_mm': '',        # Hidden input
+            # --- 按鈕：根據 HTML 更新 name ---
+            'key': '轉出Excel'     # 按鈕 name='key', value='轉出Excel'
+        }
+        # --- Payload 確認結束 ---
 
-        # 4. 點擊按鈕以觸發下載 (注意：這裡的按鈕是 "轉出Excel"，而不是 "列印作業")
-        # 根據您的需求，我假設這個頁面觸發的是下載而不是顯示在頁面上
-        # 如果是顯示在頁面，邏輯會需要再次調整
-        driver.find_element(By.XPATH, "//input[@type='submit' and @value='轉出Excel']").click()
-        
-        # --- 後續邏輯維持不變，繼續等待並讀取 .crdownload 檔案 ---
-        wait_time = 0
-        max_wait_time = 60 # 等待時間可依需調整
-        file_found = False
-        
-        while wait_time < max_wait_time:
-            target_files = glob.glob(os.path.join(download_path, "*.crdownload"))
-            if target_files:
-                latest_file = max(target_files, key=os.path.getmtime)
-                # 等待一下，確保檔案內容已被寫入
-                time.sleep(2) 
-                file_found = True
-                break
-            time.sleep(1)
-            wait_time += 1
+        try:
+            st.info(f"正在發送績效獎金請求至 {submit_url}...") # 進度提示
+            # 確認方法為 POST
+            response = session.post(submit_url, data=payload, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status() # 檢查 HTTP 錯誤
 
-        if not file_found:
-            raise TimeoutError(f"在 {max_wait_time} 秒內，於 '{download_path}' 資料夾中找不到任何 .crdownload 檔案。")
+            # --- 嘗試解碼回應內容 (同 bonus_scraper) ---
+            html_content = ""
+            try:
+                html_content = response.content.decode('big5')
+                st.info("收到伺服器回應 (嘗試 Big5 解碼)，正在解析...")
+            except UnicodeDecodeError:
+                try:
+                    html_content = response.content.decode('cp950')
+                    st.info("收到伺服器回應 (cp950 解碼)，正在解析...")
+                except UnicodeDecodeError:
+                    st.warning(f"警告：回應 Big5/cp950 解碼失敗，嘗試使用自動偵測的編碼 ({response.apparent_encoding})。")
+                    response.encoding = response.apparent_encoding
+                    html_content = response.text
+            # --- 解碼結束 ---
 
-        # 讀取暫存檔內容
-        with open(latest_file, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
+            # --- 除錯：顯示部分解碼後的內容 ---
+            st.text("解碼後的回應內容 (前 1000 字元):")
+            st.code(html_content[:1000])
+            # --- 除錯結束 ---
 
-        # 使用正規表示式解析檔案內容
-        # 假設 .crdownload 內部的文字格式與您之前提到的類似
-        pattern = r"合計:\s*(\d+)人.*?遞補:\s*(\d+)人"
-        match = re.search(pattern, content)
+            # --- 使用正規表示式解析回應內容 ---
+            pattern = r"合計:\s*(\d+)人.*?遞補:\s*(\d+)人"
+            match = re.search(pattern, html_content) # 在解碼後的內容中搜索
 
-        if not match:
-            # 如果找不到，提供一個更有用的錯誤訊息
-            # print(f"暫存檔內容: {content[:500]}") # 偵錯用，可以印出檔案內容
-            raise ValueError("在下載的暫存檔案內容中找不到 '合計: X人' 和 '遞補: Y人' 的格式文字。")
-        
-        total_count = int(match.group(1))
-        replacement_count = int(match.group(2))
-        
-        final_count = total_count - replacement_count
-        return final_count
+            if not match:
+                preview = html_content[:500].replace('<', '&lt;').replace('>', '&gt;')
+                st.error(f"錯誤：在伺服器回應中找不到 '合計: X人' 和 '遞補: Y人' 的格式文字。請檢查上面的回應內容預覽。\n```\n{preview}\n```")
+                raise ValueError("在伺服器回應內容中找不到 '合計: X人' 和 '遞補: Y人' 的格式文字。請檢查網站回應或確認是否需要 Selenium。")
 
-    finally:
-        if driver:
-            driver.quit()
-        if os.path.exists(download_path):
-            for f in glob.glob(os.path.join(download_path, "*.*")):
-                os.remove(f)
-            os.rmdir(download_path)
+            total_count = int(match.group(1))
+            replacement_count = int(match.group(2))
+            st.success(f"解析成功：合計={total_count}, 遞補={replacement_count}")
+
+            final_count = total_count - replacement_count
+            return final_count
+
+        # --- 錯誤處理---
+        except requests.exceptions.Timeout:
+             st.error(f"請求超時 ({REQUEST_TIMEOUT}秒)，無法從伺服器獲取回應。")
+             raise TimeoutError(f"請求超時 ({REQUEST_TIMEOUT}秒)，無法從伺服器獲取回應。")
+        except requests.exceptions.RequestException as e:
+            st.error(f"網路連線或請求失敗: {e}")
+            raise ConnectionError(f"網路連線或請求失敗: {e}")
+        except ValueError as e:
+            raise e
+        except Exception as e:
+            st.error(f"處理績效獎金請求時發生未預期錯誤: {e}")
+            raise RuntimeError(f"處理績效獎金請求時發生未預期錯誤: {e}")
+        # --- 錯誤處理結束 ---
