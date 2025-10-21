@@ -17,7 +17,7 @@ def show_page(conn):
     with c1:
         current_year = datetime.now().year
         # 預設查詢去年
-        year = st.number_input("選擇年份", min_value=2020, max_value=current_year + 5, value=current_year - 1)
+        year = st.number_input("選擇年份", min_value=2020, max_value=current_year + 5, value=current_year)
 
     with c2:
         try:

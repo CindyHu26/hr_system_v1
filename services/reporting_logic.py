@@ -7,6 +7,7 @@ from db import queries_salary_read as q_read
 from db import queries_salary_base as q_base
 from db import queries_config as q_config
 from db import queries_insurance as q_ins
+from db import queries_employee as q_emp
 
 def generate_annual_salary_summary(conn, year: int, item_ids: list):
     """產生年度薪資總表的核心邏輯。"""
@@ -148,71 +149,110 @@ def calculate_nhi_personal_bonus_for_period(conn, year: int, start_month: int, e
     return result_df[result_df['應繳補充保費'] > 0].sort_values(by='應繳補充保費', ascending=False)
 
 def generate_nhi_accountant_summary(conn, year: int, item_ids: list):
-    """為會計事務所產生年度二代健保計算用的獎金總表。"""
+    """為會計事務所產生年度二代健保計算用的獎金總表 (基於原始版本修改)。"""
     if not item_ids:
         return pd.DataFrame()
 
-    # 1. 查詢包含身分證號的薪資資料
+    # 1. 查詢薪資資料，確保包含 employee_id, 員工編號, 員工姓名, 身分證字號
+    #    假設 q_read.get_annual_salary_summary_data 已按要求修改
     df_raw = q_read.get_annual_salary_summary_data(conn, year, item_ids, include_id_no=True)
     if df_raw.empty:
         return pd.DataFrame()
 
-    # 2. 取得最新的加保公司資訊
-    df_ins = q_ins.get_all_insurance_history(conn)
-    latest_ins = pd.DataFrame()
-    if not df_ins.empty:
-        df_ins['start_date'] = pd.to_datetime(df_ins['start_date'])
-        latest_ins = df_ins.loc[df_ins.groupby('name_ch')['start_date'].idxmax()][['name_ch', 'company_name']]
+    # --- 獲取 employee_id (如果 df_raw 尚未包含) ---
+    if 'employee_id' not in df_raw.columns:
+         emp_map_df = q_emp.get_all_employees(conn)[['hr_code', 'id']]
+         hr_code_to_id = dict(zip(emp_map_df['hr_code'], emp_map_df['id']))
+         df_raw['employee_id'] = df_raw['員工編號'].map(hr_code_to_id)
+         df_raw.dropna(subset=['employee_id'], inplace=True)
+         df_raw['employee_id'] = df_raw['employee_id'].astype(int)
 
-    # 3. 樞紐分析：將長資料轉為寬資料
+    # 2. 樞紐分析：每個員工一行
     pivot_df = df_raw.pivot_table(
-        index=['員工姓名', '身分證字號'],
+        index=['employee_id', '員工編號', '員工姓名', '身分證字號'], # 確保索引包含所有需要的員工資訊
         columns='month',
         values='monthly_total',
         fill_value=0
     ).reset_index()
 
-    # 4. 合併加保公司資訊
-    if not latest_ins.empty:
-        final_df = pd.merge(pivot_df, latest_ins, left_on='員工姓名', right_on='name_ch', how='left')
-        final_df.drop(columns=['name_ch'], inplace=True)
-    else:
-        final_df = pivot_df
-        final_df['company_name'] = 'N/A'
-        
-    final_df.rename(columns={'company_name': '加保公司'}, inplace=True)
+    # 3. 獲取年底 (12月) 的底薪和投保級距
+    emp_ids_in_report = pivot_df['employee_id'].unique().tolist()
+    base_salaries = {}
+    insurance_salaries = {}
+    if emp_ids_in_report:
+        # 獲取投保薪資
+        insurance_salaries_map = q_base.get_batch_employee_insurance_salary(conn, emp_ids_in_report, year, 12)
+        insurance_salaries = {emp_id: salary for emp_id, salary in insurance_salaries_map.items()}
+        # 獲取底薪
+        for emp_id in emp_ids_in_report:
+             base_info = q_base.get_employee_base_salary_info(conn, emp_id, year, 12)
+             base_salaries[emp_id] = base_info['base_salary'] if base_info else 0
 
-    # 5. 確保所有月份欄位都存在
-    month_cols = {}
+    # 合併查詢到的資料
+    pivot_df['底薪'] = pivot_df['employee_id'].map(base_salaries).fillna(0).astype(int)
+    pivot_df['投保級距'] = pivot_df['employee_id'].map(insurance_salaries).fillna(0).astype(int)
+
+    # 4. 獲取年度 "最後" 的加保公司
+    df_ins_all = q_ins.get_all_insurance_history(conn) # 假設已包含 employee_id
+    latest_ins = pd.DataFrame()
+    if not df_ins_all.empty:
+        df_ins = df_ins_all[['employee_id', 'company_name', 'start_date']].copy()
+        df_ins['start_date'] = pd.to_datetime(df_ins['start_date'], errors='coerce')
+        # 篩選出 start_date 在目標年份或之前的紀錄
+        df_ins_filtered = df_ins[df_ins['start_date'].dt.year <= year].copy()
+        if not df_ins_filtered.empty:
+            # 找出每個 employee_id 最晚的 start_date 對應的紀錄
+            latest_ins = df_ins_filtered.loc[df_ins_filtered.groupby('employee_id')['start_date'].idxmax()]
+            latest_ins = latest_ins[['employee_id', 'company_name']].copy()
+
+    # 5. 合併 "最後" 加保公司資訊
+    if not latest_ins.empty:
+        final_df = pd.merge(pivot_df, latest_ins, on='employee_id', how='left')
+    else:
+        final_df = pivot_df.copy()
+        final_df['company_name'] = pd.NA # 預設
+
+    # 重新命名並填補缺失值
+    final_df.rename(columns={'company_name': '加保公司'}, inplace=True)
+    final_df['加保公司'] = final_df['加保公司'].fillna('') # 將 NA 改為空白
+
+    # 6. 確保所有月份欄位存在並計算總和
+    month_cols_map = {}
     for m in range(1, 13):
         col_name = f'{m}月'
-        month_cols[m] = col_name
+        month_cols_map[m] = col_name
+        # 處理樞紐分析後可能的數字欄位名
+        if m in final_df.columns:
+            final_df.rename(columns={m: col_name}, inplace=True)
+        elif str(m) in final_df.columns:
+             final_df.rename(columns={str(m): col_name}, inplace=True)
+        # 如果月份不存在，補 0
         if col_name not in final_df.columns:
-            # 檢查原始樞紐分析的欄位名 (可能是數字或字串)
-            if m in final_df.columns:
-                final_df.rename(columns={m: col_name}, inplace=True)
-            elif str(m) in final_df.columns:
-                 final_df.rename(columns={str(m): col_name}, inplace=True)
-            else:
-                final_df[col_name] = 0
+            final_df[col_name] = 0
 
-    # 6. 計算區間總和與年度總和
-    final_df['端午 (1-5月)'] = final_df[[month_cols[m] for m in range(1, 6)]].sum(axis=1)
-    final_df['中秋 (6-10月)'] = final_df[[month_cols[m] for m in range(6, 11)]].sum(axis=1)
-    final_df['年終 (11-12月)'] = final_df[[month_cols[m] for m in range(11, 13)]].sum(axis=1)
-    final_df['全年度 (1-12月)'] = final_df[[month_cols[m] for m in range(1, 13)]].sum(axis=1)
+    final_df['端午 (1-5月)'] = final_df[[month_cols_map[m] for m in range(1, 6)]].sum(axis=1)
+    final_df['中秋 (6-10月)'] = final_df[[month_cols_map[m] for m in range(6, 11)]].sum(axis=1)
+    final_df['年終 (11-12月)'] = final_df[[month_cols_map[m] for m in range(11, 13)]].sum(axis=1)
+    final_df['全年度 (1-12月)'] = final_df[[month_cols_map[m] for m in range(1, 13)]].sum(axis=1)
 
     # 7. 整理並排序最終欄位
     final_cols_order = [
-        '員工姓名', '加保公司', '身分證字號',
+        '員工編號', '員工姓名', '加保公司', '身分證字號',
+        '底薪', '投保級距', # <-- 新增的欄位
         '1月', '2月', '3月', '4月', '5月', '端午 (1-5月)',
         '6月', '7月', '8月', '9月', '10月', '中秋 (6-10月)',
         '11月', '12月', '年終 (11-12月)', '全年度 (1-12月)'
     ]
-    
-    # 確保所有欄位都存在
+
+    # 確保所有需要的欄位都存在，移除不需要的輔助欄位
     for col in final_cols_order:
         if col not in final_df.columns:
-            final_df[col] = 0
+            final_df[col] = 0 # 數值欄位補 0
 
-    return final_df[final_cols_order]
+    # 移除 employee_id
+    final_df = final_df[final_cols_order].copy()
+
+    # 按員工編號排序
+    final_df = final_df.sort_values(by=['員工編號'])
+
+    return final_df

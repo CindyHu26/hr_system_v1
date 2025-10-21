@@ -8,10 +8,16 @@ from datetime import timedelta, date
 from utils.helpers import get_monthly_dates
 
 def get_all_insurance_history(conn):
-    """取得所有員工的加退保歷史紀錄。"""
+    """取得所有員工的加退保歷史紀錄 (包含 employee_id)。""" # <-- 修改註解
     query = """
-    SELECT ech.id, e.name_ch, c.name as company_name,
-           ech.start_date, ech.end_date, ech.note
+    SELECT
+        ech.id,
+        e.id as employee_id,
+        e.name_ch,
+        c.name as company_name,
+        ech.start_date,
+        ech.end_date,
+        ech.note
     FROM employee_company_history ech
     JOIN employee e ON ech.employee_id = e.id
     JOIN company c ON ech.company_id = c.id
