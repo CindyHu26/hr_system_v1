@@ -65,7 +65,7 @@ def fetch_performance_count(username, password, start_date_str, end_date_str):
             'CU00_ORD': '1',       # 資料排序: 入境日
             'CU00_drt': '5',       # 辦件別 (匹配 Selenium)
             'CU00_SEL32': '4',     # 期滿到期: 無關
-            'CU00_SEL33': '9',     # 報表格式 (匹配 Selenium)
+            'CU00_SEL33': '1',     # 報表格式 (匹配 Selenium)
             'CU00_SEL35': '1',     # 表單日期格式: 內定
             'CU00_LA37': '',       # 國外仲介編號
             'CU00_LA37_1': '',     # 國外仲介名稱
