@@ -31,7 +31,6 @@ def show_page(conn):
         edited_df = st.data_editor(
             loan_df,
             width='stretch',
-            num_rows="dynamic",
             disabled=['員工編號', '員工姓名', 'id'],
             key="loan_editor"
         )

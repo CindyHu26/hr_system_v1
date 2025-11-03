@@ -6,6 +6,7 @@ requests
 selenium
 beautifulsoup4
 lxml
+html5lib
 python-dotenv
 python-dateutil
 webdriver-manager
