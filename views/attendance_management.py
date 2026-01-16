@@ -92,11 +92,37 @@ def show_page(conn):
                     display_bulk_edit_interface(conn, emp_id_list, year, month, file_name_prefix)
 
             elif edit_mode == "多人模式 (修改多位員工)":
-                from utils.ui_components import employee_selector # 局部導入
-                
                 st.markdown("##### 選擇要包含在範本中的員工")
-                selected_emp_ids = employee_selector(conn, key_prefix="att_bulk_edit")
                 
+                # 1. 取得所有部門
+                all_depts = q_emp.get_all_departments(conn)
+                
+                # 2. 設定預設部門：如果有 "服務" 就預設選取，否則不選
+                default_dept = ["服務"] if "服務" in all_depts else []
+                
+                # 3. 顯示部門多選選單 (帶有預設值)
+                selected_depts = st.multiselect(
+                    "篩選部門 (預設選取「服務」部門)", 
+                    all_depts, 
+                    default=default_dept,
+                    key="att_bulk_dept_select"
+                )
+                
+                # 4. 根據選到的部門，自動撈出底下的所有員工 ID
+                selected_emp_ids = []
+                if selected_depts:
+                    # 這裡假設 q_emp.get_employees_by_dept 回傳的是 DataFrame
+                    # 如果你的 get_employees_by_dept 回傳格式不同，請告訴我
+                    # 或是我們直接用更保險的方式：撈出所有員工再用 Pandas 過濾
+                    all_emps_df = q_emp.get_all_employees(conn)
+                    filtered_emps = all_emps_df[all_emps_df['dept'].isin(selected_depts)]
+                    selected_emp_ids = filtered_emps['id'].tolist()
+                    
+                    st.success(f"已選取 {len(selected_emp_ids)} 位員工 (來自: {', '.join(selected_depts)})")
+                else:
+                    st.info("請至少選擇一個部門。")
+
+                # 5. 繼續執行原本的下載邏輯
                 if selected_emp_ids:
                     file_name_prefix = f"attendance_multiple_staff"
                     display_bulk_edit_interface(conn, selected_emp_ids, year, month, file_name_prefix)
@@ -151,9 +177,12 @@ def display_bulk_edit_interface(conn, emp_id_list, year, month, file_name_prefix
     emp_att_df_list = []
     for emp_id in emp_id_list:
         df = q_att.get_attendance_by_employee_month(conn, emp_id, year, month)
-        emp_info = q_common.get_by_id(conn, 'employee', emp_id)
+        
+        # 如果沒有出勤紀錄，直接跳過，不加入範本
         if df.empty:
-             df = pd.DataFrame([{'id':None, 'employee_id': emp_id, 'date': f'{year}-{month}-01', 'checkin_time': None, 'checkout_time': None}])
+            continue
+            
+        emp_info = q_common.get_by_id(conn, 'employee', emp_id)
         df['員工姓名'] = emp_info['name_ch'] if emp_info else '未知員工'
         emp_att_df_list.append(df)
     

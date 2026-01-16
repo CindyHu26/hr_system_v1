@@ -10,10 +10,12 @@ from db import queries_insurance as q_ins
 def parse_labor_insurance_excel(file_obj):
     """根據官方 Excel 檔案的特定格式，解析勞保級距表。"""
     try:
-        # 【關鍵修正】將讀取引擎從 'openpyxl' 改為 'xlrd'，以兼容舊版 .xls 檔案格式
-        df = pd.read_excel(file_obj, header=None, engine='xlrd')
+        # 【關鍵修正】移除 engine='xlrd' 參數，讓 Pandas 根據副檔名自動選擇
+        # (.xls 會自動用 xlrd，.xlsx 會自動用 openpyxl)
+        df = pd.read_excel(file_obj, header=None) 
         
         # 根據經驗，關鍵資料通常在這些行（可能會隨檔案版本變動）
+        # 注意：若勞保局改版 Excel 格式，這裡的 iloc 索引可能需要調整
         grade_row_data = df.iloc[36]
         salary_row_data = df.iloc[37]
         fee_row_data = df.iloc[68]

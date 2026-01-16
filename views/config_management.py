@@ -13,7 +13,7 @@ DEFAULT_CONFIGS = {
     'FOREIGNER_LOW_INCOME_TAX_RATE': {'value': '0.06', 'desc': '外籍稅務 - 較低稅率', 'type': 'number'},
     'FOREIGNER_HIGH_INCOME_TAX_RATE': {'value': '0.18', 'desc': '外籍稅務 - 較高稅率', 'type': 'number'},
     'NHI_BONUS_ITEMS': {'value': "津貼,津貼加班,特休未休,主管津貼,仲介師,加薪,補助,業務獎金,績效獎金", 'desc': '二代健保累計獎金項目 (用逗號分隔)', 'type': 'text_area'},
-    'HEALTH_INSURANCE_URL': {'value': "https://www.nhi.gov.tw/ch/cp-17545-f87bd-2576-1.html", 'desc': '健保署保費負擔金額表網址', 'type': 'text'},
+    'HEALTH_INSURANCE_URL': {'value': "https://www.nhi.gov.tw/ch/cp-19418-9eefb-2576-1.html", 'desc': '健保署保費負擔金額表網址', 'type': 'text'},
     'DEFAULT_GSHEET_URL': {'value': "請在此貼上您的Google Sheet分享連結", 'desc': '預設請假單來源 (Google Sheet)', 'type': 'text'},
 }
 

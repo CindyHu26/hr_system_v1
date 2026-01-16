@@ -11,6 +11,7 @@ python-dotenv
 python-dateutil
 webdriver-manager
 python-docx
-xlrd==1.2.0
+xlrd>=2.0.1
 xlwt
 xlutils
+selenium

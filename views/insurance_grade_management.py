@@ -6,8 +6,14 @@ from datetime import datetime, date
 
 from db import queries_insurance as q_ins
 from db import queries_common as q_common
-from db import queries_config as q_config # <-- 新增 import
+from db import queries_config as q_config
 from services import insurance_logic as logic_ins
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import time
 
 COLUMN_MAP = {
     'grade': '級', 'salary_min': '薪資下限', 'salary_max': '薪資上限',
@@ -72,30 +78,54 @@ def show_page(conn):
 
     with tab2:
         st.markdown("##### 更新健保投保金額分級表")
-        # 從資料庫讀取網址
         db_configs = q_config.get_all_configs(conn)
-        default_health_url = db_configs.get('HEALTH_INSURANCE_URL', "https://www.nhi.gov.tw/ch/cp-17545-f87bd-2576-1.html")
+        default_health_url = db_configs.get('HEALTH_INSURANCE_URL', "https://www.nhi.gov.tw/ch/cp-19418-9eefb-2576-1.html")
         health_url = st.text_input("健保署保費負擔金額表網址", value=default_health_url)
+        
         if st.button("🔗 從網址解析並預覽"):
+            status_text = st.empty()
             try:
-                with st.spinner(f"正在從 {health_url} 下載網頁內容..."):
-                    headers = {'User-Agent': 'Mozilla/5.0'}
-                    response = requests.get(health_url, headers=headers, timeout=15)
-                    response.raise_for_status()
-                with st.spinner("正在解析表格內容..."):
-                    st.session_state.parsed_health_df = logic_ins.parse_health_insurance_html(response.text)
-                st.success("成功解析健保網頁表格！")
+                status_text.info("正在啟動瀏覽器模擬器 (Selenium)...")
+                
+                # --- 使用 Selenium 替代 requests ---
+                chrome_options = Options()
+                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--disable-gpu")
+                chrome_options.add_argument("--no-sandbox")
+                chrome_options.add_argument("--window-size=1920,1080")
+                chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                
+                html_content = ""
+                try:
+                    status_text.info(f"正在前往 {health_url} ...")
+                    driver.get(health_url)
+                    time.sleep(3) # 等待網頁載入
+                    html_content = driver.page_source
+                finally:
+                    driver.quit()
+
+                status_text.info("正在解析表格內容...")
+                # 這裡直接傳入 html_content
+                st.session_state.parsed_health_df = logic_ins.parse_health_insurance_html(html_content)
+                status_text.success("成功解析健保網頁表格！")
             except Exception as e:
-                st.error(f"處理失敗: {e}")
+                status_text.error(f"處理失敗: {e}")
+                st.error("請確認您的電腦已安裝 Google Chrome 瀏覽器。")
 
         if 'parsed_health_df' in st.session_state and st.session_state.parsed_health_df is not None:
             st.markdown(f"##### 解析結果預覽 (將以 **{start_date}** 作為起算日匯入)")
             st.dataframe(st.session_state.parsed_health_df)
+            
             if st.button(f"✅ 確認匯入「健保」級距表", type="primary"):
                 try:
+                    # 使用原始變數 start_date 和原始函式 q_ins.batch_insert_or_replace_grades
                     count = q_ins.batch_insert_or_replace_grades(conn, st.session_state.parsed_health_df, 'health', start_date)
                     st.success(f"成功匯入/更新 {count} 筆起算日為 {start_date} 的健保級距資料！")
                     del st.session_state.parsed_health_df
+                    time.sleep(1)
                     st.rerun()
                 except Exception as e:
                     st.error(f"寫入資料庫時發生錯誤：{e}")

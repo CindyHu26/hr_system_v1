@@ -72,3 +72,17 @@ def batch_add_or_update_employees(conn, df: pd.DataFrame):
         report['errors'].append({'row': 'N/A', 'reason': f'資料庫操作失敗: {e}'})
 
     return report
+
+def get_all_departments(conn):
+    """
+    從員工資料表中取得所有不重複的部門名稱。
+    用於下拉選單篩選。
+    """
+    cursor = conn.cursor()
+    # 查詢所有不為空值的部門，並去除重複
+    query = "SELECT DISTINCT dept FROM employee WHERE dept IS NOT NULL AND dept != '' ORDER BY dept"
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    
+    # 將查詢結果轉換為純文字列表，例如 ['服務', '業務', '管理']
+    return [row[0] for row in rows]
