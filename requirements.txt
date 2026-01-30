@@ -15,3 +15,4 @@ xlrd>=2.0.1
 xlwt
 xlutils
 selenium
+matplotlib

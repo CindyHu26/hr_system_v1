@@ -89,107 +89,108 @@ def calculate_salary_df(conn, year, month):
         base_salary = base_info['base_salary']
         details['底薪'] = int(round(base_salary))
         
+        insurance_salary = base_info['insurance_salary'] or base_salary
+        hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
+
+        # --- 計算邏輯 ---
+        # 1. 常態薪資項目
+        # 呼叫更新後的函式
+        for item in q_allow.get_employee_recurring_items(conn, emp_id, year, month):
+            details[item['name']] = -abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount'])
+
+        # 2. 其他計算項目
+        if emp['dept'] in ['服務', '行政']:
+            entry_date_str = emp['entry_date']
+            if pd.notna(entry_date_str):
+                entry_date = pd.to_datetime(entry_date_str).date()
+                if entry_date.month == month:
+                    last_anniversary_year_start = date(year - 1, entry_date.month, entry_date.day)
+                    last_anniversary_year_end = last_anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
+                    service_years = (last_anniversary_year_start - entry_date).days / 365.25
+                    total_entitled_days = calculate_leave_entitlement(service_years)
+                    used_hours = q_att.get_leave_hours_for_period(conn, emp_id, '特休', last_anniversary_year_start, last_anniversary_year_end)
+                    unused_days = total_entitled_days - (used_hours / 8)
+                    if unused_days > 0:
+                        details['特休未休'] = int(round(unused_days * (base_salary / 30)))
+
+        if emp_id in monthly_attendance.index:
+            emp_att = monthly_attendance.loc[emp_id]
+            if emp_att.get('late_minutes', 0) > 0: details['遲到'] = -int(round((emp_att['late_minutes'] / 60) * hourly_rate))
+            if emp_att.get('early_leave_minutes', 0) > 0: details['早退'] = -int(round((emp_att['early_leave_minutes'] / 60) * hourly_rate))
+            if emp_att.get('overtime1_minutes', 0) > 0: details['加班費(延長工時)'] = int(round((emp_att['overtime1_minutes'] / 60) * hourly_rate * 1.34))
+            re_extended_minutes = emp_att.get('overtime2_minutes', 0) + emp_att.get('overtime3_minutes', 0)
+            if re_extended_minutes > 0: details['加班費(再延長工時)'] = int(round((re_extended_minutes / 60) * hourly_rate * 1.67))
+
+        for leave_type, hours in q_att.get_employee_leave_summary(conn, emp_id, year, month):
+            if hours > 0:
+                if leave_type == '事假': details['事假'] = -int(round(hours * hourly_rate))
+                elif leave_type == '病假': details['病假'] = -int(round(hours * hourly_rate * 0.5))
+
+        is_insured_in_company = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
+
+        if is_insured_in_company:
+            auto_labor_fee, auto_health_fee = calculate_single_employee_insurance(conn, insurance_salary, base_info['dependents_under_18'], base_info['dependents_over_18'], emp['nhi_status'], emp['nhi_status_expiry'], year, month)
+            details['勞保費'] = -int(base_info['labor_insurance_override'] if pd.notna(base_info['labor_insurance_override']) else auto_labor_fee)
+            health_override = base_info['health_insurance_override']
+            if pd.notna(health_override):
+                manual_health_base = int(health_override)
+                d_under_18 = float(base_info['dependents_under_18'] or 0)
+                d_over_18 = float(base_info['dependents_over_18'] or 0)
+                health_ins_count = min(3, d_under_18 + d_over_18)
+                final_health_fee = int(round(manual_health_base * (1 + health_ins_count)))
+                if emp['nhi_status'] == '自理': final_health_fee = 0
+                details['健保費'] = -final_health_fee
+            else:
+                details['健保費'] = -auto_health_fee
+            details['勞退提撥'] = int(base_info['pension_override'] if pd.notna(base_info['pension_override']) else round(insurance_salary * 0.06))
+        
+        if emp['nationality'] and emp['nationality'] != 'TW' and pd.notna(emp['entry_date']):
+            entry_date = pd.to_datetime(emp['entry_date']).date()
+            should_withhold = (year == entry_date.year and (entry_date.month >= 7 or month < entry_date.month + 6)) or \
+                                (year == entry_date.year + 1 and month <= 6)
+            if should_withhold and insurance_salary > 0:
+                tax_rate = FOREIGNER_LOW_RATE if base_salary <= TAX_THRESHOLD else FOREIGNER_HIGH_RATE
+                details['稅款'] = -int(round(insurance_salary * tax_rate))
+        
+        special_ot_pay = overtime_logic.calculate_special_overtime_pay(conn, emp_id, year, month, hourly_rate)
+        if special_ot_pay > 0: details['津貼加班'] = details.get('津貼加班', 0) + special_ot_pay
+        
+        loan_amount = q_loan.get_employee_loan(conn, emp_id, year, month)
+        if loan_amount > 0: details['借支'] = -int(loan_amount)
+        
+        # 🔻 修改 2：增加判斷，只有「非協理」才計算業務獎金
         if emp['title'] != '協理':
-            insurance_salary = base_info['insurance_salary'] or base_salary
-            hourly_rate = base_salary / HOURLY_RATE_DIVISOR if HOURLY_RATE_DIVISOR > 0 else 0
-
-            # --- 計算邏輯 ---
-            # 1. 常態薪資項目
-            # 呼叫更新後的函式
-            for item in q_allow.get_employee_recurring_items(conn, emp_id, year, month):
-                details[item['name']] = -abs(item['amount']) if item['type'] == 'deduction' else abs(item['amount'])
-
-            # 2. 其他計算項目
-            if emp['dept'] in ['服務', '行政']:
-                entry_date_str = emp['entry_date']
-                if pd.notna(entry_date_str):
-                    entry_date = pd.to_datetime(entry_date_str).date()
-                    if entry_date.month == month:
-                        last_anniversary_year_start = date(year - 1, entry_date.month, entry_date.day)
-                        last_anniversary_year_end = last_anniversary_year_start + relativedelta(years=1) - relativedelta(days=1)
-                        service_years = (last_anniversary_year_start - entry_date).days / 365.25
-                        total_entitled_days = calculate_leave_entitlement(service_years)
-                        used_hours = q_att.get_leave_hours_for_period(conn, emp_id, '特休', last_anniversary_year_start, last_anniversary_year_end)
-                        unused_days = total_entitled_days - (used_hours / 8)
-                        if unused_days > 0:
-                            details['特休未休'] = int(round(unused_days * (base_salary / 30)))
-
-            if emp_id in monthly_attendance.index:
-                emp_att = monthly_attendance.loc[emp_id]
-                if emp_att.get('late_minutes', 0) > 0: details['遲到'] = -int(round((emp_att['late_minutes'] / 60) * hourly_rate))
-                if emp_att.get('early_leave_minutes', 0) > 0: details['早退'] = -int(round((emp_att['early_leave_minutes'] / 60) * hourly_rate))
-                if emp_att.get('overtime1_minutes', 0) > 0: details['加班費(延長工時)'] = int(round((emp_att['overtime1_minutes'] / 60) * hourly_rate * 1.34))
-                re_extended_minutes = emp_att.get('overtime2_minutes', 0) + emp_att.get('overtime3_minutes', 0)
-                if re_extended_minutes > 0: details['加班費(再延長工時)'] = int(round((re_extended_minutes / 60) * hourly_rate * 1.67))
-
-            for leave_type, hours in q_att.get_employee_leave_summary(conn, emp_id, year, month):
-                if hours > 0:
-                    if leave_type == '事假': details['事假'] = -int(round(hours * hourly_rate))
-                    elif leave_type == '病假': details['病假'] = -int(round(hours * hourly_rate * 0.5))
-
-            is_insured_in_company = q_ins.is_employee_insured_in_month(conn, emp_id, year, month)
-
-            if is_insured_in_company:
-                auto_labor_fee, auto_health_fee = calculate_single_employee_insurance(conn, insurance_salary, base_info['dependents_under_18'], base_info['dependents_over_18'], emp['nhi_status'], emp['nhi_status_expiry'], year, month)
-                details['勞保費'] = -int(base_info['labor_insurance_override'] if pd.notna(base_info['labor_insurance_override']) else auto_labor_fee)
-                health_override = base_info['health_insurance_override']
-                if pd.notna(health_override):
-                    manual_health_base = int(health_override)
-                    d_under_18 = float(base_info['dependents_under_18'] or 0)
-                    d_over_18 = float(base_info['dependents_over_18'] or 0)
-                    health_ins_count = min(3, d_under_18 + d_over_18)
-                    final_health_fee = int(round(manual_health_base * (1 + health_ins_count)))
-                    if emp['nhi_status'] == '自理': final_health_fee = 0
-                    details['健保費'] = -final_health_fee
-                else:
-                    details['健保費'] = -auto_health_fee
-                details['勞退提撥'] = int(base_info['pension_override'] if pd.notna(base_info['pension_override']) else round(insurance_salary * 0.06))
-            
-            if emp['nationality'] and emp['nationality'] != 'TW' and pd.notna(emp['entry_date']):
-                entry_date = pd.to_datetime(emp['entry_date']).date()
-                should_withhold = (year == entry_date.year and (entry_date.month >= 7 or month < entry_date.month + 6)) or \
-                                  (year == entry_date.year + 1 and month <= 6)
-                if should_withhold and insurance_salary > 0:
-                    tax_rate = FOREIGNER_LOW_RATE if base_salary <= TAX_THRESHOLD else FOREIGNER_HIGH_RATE
-                    details['稅款'] = -int(round(insurance_salary * tax_rate))
-            
-            special_ot_pay = overtime_logic.calculate_special_overtime_pay(conn, emp_id, year, month, hourly_rate)
-            if special_ot_pay > 0: details['津貼加班'] = details.get('津貼加班', 0) + special_ot_pay
-            
-            loan_amount = q_loan.get_employee_loan(conn, emp_id, year, month)
-            if loan_amount > 0: details['借支'] = -int(loan_amount)
-            
             bonus_result = q_bonus.get_employee_bonus(conn, emp_id, year, month)
             if bonus_result: details['業務獎金'] = int(round(bonus_result['bonus_amount']))
-            
-            perf_bonus_result = q_perf.get_performance_bonus(conn, emp_id, year, month)
-            if perf_bonus_result: details['績效獎金'] = int(round(perf_bonus_result))
-            
-            if is_insured_in_company:
-                period_to_check = None
-                if month == 6: period_to_check = {"start": 1, "end": 5, "year": year}
-                elif month == 11: period_to_check = {"start": 6, "end": 10, "year": year}
-                elif month == 1: period_to_check = {"start": 11, "end": 12, "year": year - 1}
+        
+        perf_bonus_result = q_perf.get_performance_bonus(conn, emp_id, year, month)
+        if perf_bonus_result: details['績效獎金'] = int(round(perf_bonus_result))
+        
+        if is_insured_in_company:
+            period_to_check = None
+            if month == 6: period_to_check = {"start": 1, "end": 5, "year": year}
+            elif month == 11: period_to_check = {"start": 6, "end": 10, "year": year}
+            elif month == 1: period_to_check = {"start": 11, "end": 12, "year": year - 1}
 
-                if period_to_check:
-                    p_year, p_start, p_end = period_to_check["year"], period_to_check["start"], period_to_check["end"]
-                    period_bonus, already_deducted = q_read.get_cumulative_bonus_for_period(conn, emp_id, p_year, p_start, p_end, NHI_BONUS_ITEMS)
-                    if period_bonus > 0:
-                        deduction_threshold = insurance_salary * NHI_BONUS_MULTIPLIER
-                        if period_bonus > deduction_threshold:
-                            taxable_bonus = period_bonus - deduction_threshold
-                            total_premium_due = round(taxable_bonus * NHI_SUPPLEMENT_RATE)
-                            this_month_premium = total_premium_due - already_deducted
-                            if this_month_premium > 0:
-                                details['二代健保(高額獎金)'] = -int(this_month_premium)
-            else:
-                earning_cols_for_calc = [k for k, t in item_types.items() if t == 'earning']
-                total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols_for_calc)
-                if total_earnings_for_part_time > MINIMUM_WAGE_OF_YEAR:
-                    part_time_premium = math.ceil(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
-                    if part_time_premium > 0: details['二代健保(兼職)'] = -int(part_time_premium)
+            if period_to_check:
+                p_year, p_start, p_end = period_to_check["year"], period_to_check["start"], period_to_check["end"]
+                period_bonus, already_deducted = q_read.get_cumulative_bonus_for_period(conn, emp_id, p_year, p_start, p_end, NHI_BONUS_ITEMS)
+                if period_bonus > 0:
+                    deduction_threshold = insurance_salary * NHI_BONUS_MULTIPLIER
+                    if period_bonus > deduction_threshold:
+                        taxable_bonus = period_bonus - deduction_threshold
+                        total_premium_due = round(taxable_bonus * NHI_SUPPLEMENT_RATE)
+                        this_month_premium = total_premium_due - already_deducted
+                        if this_month_premium > 0:
+                            details['二代健保(高額獎金)'] = -int(this_month_premium)
+        else:
+            earning_cols_for_calc = [k for k, t in item_types.items() if t == 'earning']
+            total_earnings_for_part_time = sum(details.get(item, 0) for item in earning_cols_for_calc)
+            if total_earnings_for_part_time > MINIMUM_WAGE_OF_YEAR:
+                part_time_premium = math.ceil(total_earnings_for_part_time * NHI_SUPPLEMENT_RATE)
+                if part_time_premium > 0: details['二代健保(兼職)'] = -int(part_time_premium)
 
-        if base_salary > 0 and emp['title'] != '協理':
+        if base_salary > 0:
             unpaid_days_df = pd.read_sql_query(f"SELECT date FROM special_unpaid_days WHERE strftime('%Y-%m', date) = '{year}-{month:02d}'", conn)
             unpaid_dates = set(pd.to_datetime(unpaid_days_df['date']).dt.date)
 

@@ -92,7 +92,7 @@ def show_page(conn):
         with st.form("add_insurance_form", clear_on_submit=True):
             selected_emp_key = st.selectbox("選擇員工*", options=emp_options.keys(), index=None)
             selected_comp_key = st.selectbox("選擇加保單位*", options=comp_options.keys(), index=None)
-            min_date = date(2000, 1, 1)
+            min_date = date(1950, 1, 1)
             start_date = st.date_input("加保日期*", value=datetime.now(), min_value=min_date, max_value=date.today().replace(year=date.today().year + 5))
             end_date = st.date_input("退保日期 (可留空)", value=None, min_value=min_date)
             note = st.text_input("備註")

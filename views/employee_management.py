@@ -124,7 +124,7 @@ def show_page(conn):
             c7, c8, c9 = st.columns(3)
             nationality_ch = c7.selectbox("國籍", list(NATIONALITY_MAP.keys()))
             min_date_birth = date(1950, 1, 1)
-            min_date_general = date(2000, 1, 1)
+            min_date_general = date(1950, 1, 1)
             max_date = date.today().replace(year=date.today().year + 10)
             birth_date = c8.date_input("生日", value=None, min_value=min_date_birth, max_value=date.today())
             entry_date = c9.date_input("到職日", value=None, min_value=min_date_general, max_value=max_date)

@@ -132,9 +132,10 @@ def show_page(conn):
                     st.success("成功新增紀錄！")
                     st.rerun()
 
-        # --- 修改/刪除紀錄 ---
+# --- 修改/刪除紀錄 ---
         with st.expander("✏️ 修改或刪除現有紀錄"):
             if not history_df_raw.empty:
+                # 建立選單：顯示 ID、姓名與生效日
                 options = {f"ID:{row['id']} - {row['name_ch']} (生效日: {row['start_date']})": row['id'] for _, row in history_df_raw.iterrows()}
                 selected_key = st.selectbox("選擇要操作的紀錄", options.keys(), index=None, placeholder="從上方總覽選擇一筆紀錄...")
 
@@ -144,46 +145,90 @@ def show_page(conn):
                     
                     with st.form(f"edit_base_history_{record_id}"):
                         st.write(f"正在編輯 **{record_data['name_ch']}** 的紀錄 (ID: {record_id})")
+                        
+                        # 1. 薪資與眷屬
                         c1, c2, c3 = st.columns(3)
                         base_salary_edit = c1.number_input("底薪*", min_value=0, value=int(record_data['base_salary']))
                         dependents_under_18_edit = c2.number_input("健保眷屬數(<18歲)*", min_value=0.0, step=1.00, format="%.2f", value=float(record_data.get('dependents_under_18', 0)))
                         dependents_over_18_edit = c3.number_input("健保眷屬數(>=18歲)*", min_value=0.0, step=1.00, format="%.2f", value=float(record_data.get('dependents_over_18', 0)))
                         
+                        # 2. 日期與備註
                         c4, c5 = st.columns(2)
                         start_date_edit = c4.date_input("生效日*", value=to_date(record_data.get('start_date')))
                         end_date_edit = c5.date_input("結束日", value=to_date(record_data.get('end_date')))
                         note_edit = st.text_area("備註", value=record_data.get('note') or "")
                         
-                        st.markdown("##### 手動調整 (選填)")
-                        c6, c7, c8 = st.columns(3)
+                        st.markdown("---")
+                        st.markdown("##### 🔧 手動費用設定 (勾選代表手動指定，取消代表依系統計算)")
                         
-                        # 處理 override 欄位的 None 和 float 型別問題
+                        # 3. 手動費用邏輯 (Checkbox + NumberInput)
+                        
+                        # (A) 勞保費手動設定
+                        c6_a, c6_b = st.columns([1, 2])
                         labor_val = record_data.get('labor_insurance_override')
-                        labor_override_edit = c6.number_input("勞保費(手動)", min_value=0, step=1, value=int(labor_val) if pd.notna(labor_val) else None)
+                        has_labor_val = pd.notna(labor_val) # 判斷原本是否有值
+                        
+                        # Checkbox: 決定是否要手動
+                        use_labor = c6_a.checkbox("手動勞保費", value=has_labor_val, key=f"chk_labor_{record_id}")
+                        if use_labor:
+                            # 顯示輸入框 (若原本有值就用原本的，否則預設 0)
+                            default_labor = int(labor_val) if has_labor_val else 0
+                            labor_override_edit = c6_b.number_input("金額 (勞保)", min_value=0, step=1, value=default_labor, key=f"num_labor_{record_id}")
+                        else:
+                            # 未勾選 => 設為 None
+                            labor_override_edit = None
 
+                        # (B) 健保費手動設定
+                        c7_a, c7_b = st.columns([1, 2])
                         health_val = record_data.get('health_insurance_override')
-                        health_override_edit = c7.number_input("健保費(手動)", min_value=0, step=1, value=int(health_val) if pd.notna(health_val) else None)
+                        has_health_val = pd.notna(health_val)
 
+                        use_health = c7_a.checkbox("手動健保費", value=has_health_val, key=f"chk_health_{record_id}")
+                        if use_health:
+                            default_health = int(health_val) if has_health_val else 0
+                            health_override_edit = c7_b.number_input("金額 (健保)", min_value=0, step=1, value=default_health, key=f"num_health_{record_id}")
+                        else:
+                            health_override_edit = None
+
+                        # (C) 勞退提撥手動設定
+                        c8_a, c8_b = st.columns([1, 2])
                         pension_val = record_data.get('pension_override')
-                        pension_override_edit = c8.number_input("勞退提撥(手動)", min_value=0, step=1, value=int(pension_val) if pd.notna(pension_val) else None)
+                        has_pension_val = pd.notna(pension_val)
 
+                        use_pension = c8_a.checkbox("手動勞退", value=has_pension_val, key=f"chk_pension_{record_id}")
+                        if use_pension:
+                            default_pension = int(pension_val) if has_pension_val else 0
+                            pension_override_edit = c8_b.number_input("金額 (勞退)", min_value=0, step=1, value=default_pension, key=f"num_pension_{record_id}")
+                        else:
+                            pension_override_edit = None
+
+                        # 4. 按鈕區
                         c_update, c_delete = st.columns(2)
-                        if c_update.form_submit_button("儲存變更", width='stretch'):
+                        
+                        if c_update.form_submit_button("💾 儲存變更", type="primary", width='stretch'):
                             insurance_salary_edit = q_ins.get_insurance_salary_level(conn, base_salary_edit)
+                            
                             updated_data = {
-                                'base_salary': base_salary_edit, 'insurance_salary': insurance_salary_edit,
-                                'dependents_under_18': dependents_under_18_edit, 'dependents_over_18': dependents_over_18_edit,
-                                'labor_insurance_override': labor_override_edit, 'health_insurance_override': health_override_edit,
+                                'base_salary': base_salary_edit, 
+                                'insurance_salary': insurance_salary_edit,
+                                'dependents_under_18': dependents_under_18_edit, 
+                                'dependents_over_18': dependents_over_18_edit,
+                                
+                                # 這裡的變數已經根據 Checkbox 決定是 數字 還是 None 了
+                                'labor_insurance_override': labor_override_edit, 
+                                'health_insurance_override': health_override_edit,
                                 'pension_override': pension_override_edit,
+                                
                                 'start_date': start_date_edit.strftime('%Y-%m-%d') if start_date_edit else None,
                                 'end_date': end_date_edit.strftime('%Y-%m-%d') if end_date_edit else None,
                                 'note': note_edit
                             }
+                            
                             q_common.update_record(conn, 'salary_base_history', record_id, updated_data)
                             st.success(f"紀錄 ID:{record_id} 已更新！")
                             st.rerun()
 
-                        if c_delete.form_submit_button("🔴 刪除此紀錄", width='stretch', type="primary"):
+                        if c_delete.form_submit_button("🔴 刪除此紀錄", width='stretch'):
                             q_common.delete_record(conn, 'salary_base_history', record_id)
                             st.warning(f"紀錄 ID:{record_id} 已刪除！")
                             st.rerun()

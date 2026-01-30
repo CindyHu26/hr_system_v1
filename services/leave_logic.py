@@ -9,6 +9,7 @@ import requests
 import io
 import csv
 from datetime import datetime, time, date, timedelta
+from dateutil.relativedelta import relativedelta
 import traceback
 import streamlit as st
 from bs4 import BeautifulSoup
@@ -350,3 +351,121 @@ def analyze_attendance_leave_conflicts(conn, year: int, month: int):
          return pd.DataFrame({'分析結果': ['✅ 完美！該月份的出勤與請假紀錄沒有發現明顯衝突。']})
 
     return pd.DataFrame(all_records)
+
+def get_employee_annual_leave_history(self, employee_id, hire_date_str):
+        """
+        計算該員工歷年的特休週期、應給、已休、剩餘 (週年制)
+        """
+        if not hire_date_str:
+            return []
+
+        try:
+            hire_date = datetime.strptime(str(hire_date_str), '%Y-%m-%d').date()
+        except ValueError:
+            return []
+
+        today = datetime.now().date()
+        history_records = []
+        
+        # 台灣勞基法特休規則 (年資 -> 天數)
+        def get_entitled_days(years_of_service):
+            if years_of_service < 0.5: return 0
+            if 0.5 <= years_of_service < 1: return 3
+            if 1 <= years_of_service < 2: return 7
+            if 2 <= years_of_service < 3: return 10
+            if 3 <= years_of_service < 5: return 14
+            if 5 <= years_of_service < 10: return 15
+            # 10年以上，每一年加1天，上限30天
+            days = 15 + (int(years_of_service) - 9)
+            return min(days, 30)
+
+        # 從到職日開始推算每一個週期，直到超過今天的一年後
+        # 邏輯：
+        # 1. 滿半年: hire_date + 6m ~ hire_date + 1y
+        # 2. 滿一年: hire_date + 1y ~ hire_date + 2y
+        # 3. 滿兩年: hire_date + 2y ~ hire_date + 3y ...
+        
+        # 處理滿半年的特殊情況 (6個月~1年)
+        date_6m = hire_date + relativedelta(months=6)
+        date_1y = hire_date + relativedelta(years=1)
+        
+        if date_6m <= today or True: # 只要有這段歷史都算
+            # 查詢這段期間的請假天數 (需呼叫 DB 查詢特定區間的特休)
+            used_days = self.get_used_annual_leave_in_period(employee_id, date_6m, date_1y)
+            entitled = 3
+            
+            history_records.append({
+                "年資": "滿半年 (6個月-1年)",
+                "週期開始": date_6m,
+                "週期結束": date_1y,
+                "特休總額": entitled,
+                "已休天數": used_days,
+                "剩餘天數": entitled - used_days,
+                "狀態": "過期" if date_1y < today else "進行中"
+            })
+
+        # 處理滿 N 年的迴圈
+        current_check_date = date_1y
+        years_count = 1
+        
+        while current_check_date <= today + relativedelta(years=1):
+            period_start = current_check_date
+            period_end = current_check_date + relativedelta(years=1)
+            
+            # 計算該年度應給天數
+            entitled = get_entitled_days(years_count)
+            
+            # 查詢區間內已用特休
+            used_days = self.get_used_annual_leave_in_period(employee_id, period_start, period_end)
+            
+            status = "未開始"
+            if period_start <= today <= period_end:
+                status = "進行中 (目前年度)"
+            elif period_end < today:
+                status = "過期 (可結算)"
+            
+            history_records.append({
+                "年資": f"滿 {years_count} 年",
+                "週期開始": period_start,
+                "週期結束": period_end,
+                "特休總額": entitled,
+                "已休天數": used_days,
+                "剩餘天數": entitled - used_days,
+                "狀態": status
+            })
+            
+            current_check_date = period_end
+            years_count += 1
+
+        # 反轉列表，讓最近的年度在最上面
+        return history_records[::-1]
+
+def get_used_annual_leave_in_period(self, employee_id, start_date, end_date):
+    """
+    輔助函數：查詢某員工在特定日期區間內，請了多少天'特休'
+    這需要呼叫 db/queries_attendance.py 或直接執行 SQL
+    """
+    from db.db_manager import get_db_connection
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 假設 leave_records 表有 leave_type='特休'，並且有 start_date, end_date, total_days
+    # 注意：這裡簡化了跨天計算，假設資料庫存的是單筆請假紀錄
+    query = """
+        SELECT SUM(days) 
+        FROM leave_records 
+        WHERE employee_id = %s 
+            AND leave_type = '特休'
+            AND status = 'Approved'
+            AND start_date >= %s 
+            AND start_date < %s
+    """
+    # 注意: end_date 通常是不包含的，或是看您的系統設計
+    
+    cursor.execute(query, (employee_id, start_date, end_date))
+    result = cursor.fetchone()
+    conn.close()
+    
+    return result[0] if result and result[0] else 0.0
+

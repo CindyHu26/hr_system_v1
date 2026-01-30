@@ -71,7 +71,7 @@ def match_employees_by_name(conn, attendance_df: pd.DataFrame):
     """
     if attendance_df.empty: return attendance_df
     try:
-        emp_df = q_emp.get_all_employees(conn)
+        emp_df = q_emp.s(conn)
         if emp_df.empty:
             attendance_df['employee_id'] = None
             return attendance_df

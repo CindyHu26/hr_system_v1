@@ -77,7 +77,7 @@ def show_page(conn):
         
         if not summary_df.empty:
             summary_df['總計'] = summary_df.sum(axis=1)
-            st.dataframe(summary_df.style.format("{:.2f}").background_gradient(cmap='viridis', subset=['總計']), width='stretch')
+            st.dataframe(summary_df.style.format("{:.2f}"), width='stretch')
         else:
             st.info("目前篩選範圍內無資料可供統計。")
             
